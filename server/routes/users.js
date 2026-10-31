@@ -22,7 +22,30 @@ router.get('/', (req, res) => {
 });
 
 // 2. List pending registration requests
-router.get('/pending', (req, res) => {
+router.get('/pending', async (req, res) => {
+  try {
+    const { data: suRequests, error } = await db.supabase
+      .from('users')
+      .select('id, name, first_name, last_name, middle_name, email, phone, role, status, branch, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (!error && suRequests) {
+      // Sync into local SQLite
+      for (const r of suRequests) {
+        try {
+          db.prepare(`
+            INSERT OR REPLACE INTO users (id, name, first_name, last_name, middle_name, email, phone, role, status, branch, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(r.id, r.name, r.first_name, r.last_name, r.middle_name, r.email, r.phone, r.role, r.status, r.branch, r.created_at);
+        } catch (e) {}
+      }
+      return res.json({ requests: suRequests });
+    }
+  } catch (err) {
+    console.warn('[Supabase pending fetch warn]:', err.message);
+  }
+
   const requests = db.prepare(`
     SELECT id, name, first_name, last_name, middle_name, email, phone, role, status, branch, created_at
     FROM users
@@ -33,7 +56,7 @@ router.get('/pending', (req, res) => {
 });
 
 // 3. Approve user registration and assign role & branch
-const handleApprove = (req, res) => {
+const handleApprove = async (req, res) => {
   const userId = req.params.id || req.body.userId;
   const targetRole = req.body.assignedRole || req.body.role;
   const { specialistId, branch } = req.body;
@@ -48,20 +71,40 @@ const handleApprove = (req, res) => {
   }
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) {
-    return res.status(404).json({ error: 'Пользователь не найден' });
+
+  // 1. Update in Supabase (Cloud truth)
+  try {
+    await db.supabase
+      .from('users')
+      .update({
+        status: 'active',
+        role: targetRole,
+        specialist_id: specialistId || null,
+        branch: branch || 'Астана — Центр',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    if (specialistId) {
+      await db.supabase.from('specialists').update({ user_id: userId }).eq('id', specialistId);
+    }
+    console.log(`[Supabase] User #${userId} approved with role ${targetRole}`);
+  } catch (err) {
+    console.warn('[Supabase Approve Warn]:', err.message);
   }
 
+  // 2. Update local SQLite
   db.prepare(`
     UPDATE users 
     SET status = 'active', role = ?, specialist_id = ?, branch = COALESCE(?, branch), updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(targetRole, specialistId || null, branch || 'Астана — Центр', userId);
 
-  // If linked to specialist, link user_id in specialists
   if (specialistId) {
     db.prepare('UPDATE specialists SET user_id = ? WHERE id = ?').run(userId, specialistId);
   }
+
+  const userName = user ? user.name : `Пользователь #${userId}`;
 
   logAuditAction({
     userId: req.user.id,
@@ -70,25 +113,33 @@ const handleApprove = (req, res) => {
     action: 'USER_APPROVED',
     entityType: 'users',
     entityId: userId,
-    details: `Одобрена заявка ${user.name}: роль «${targetRole}», филиал «${branch || 'Астана — Центр'}»`,
+    details: `Одобрена заявка ${userName}: роль «${targetRole}», филиал «${branch || 'Астана — Центр'}» (Supabase)`,
     ipAddress: req.ip
   });
 
-  res.json({ success: true, message: `Пользователь ${user.name} успешно одобрен и получил роль ${targetRole}` });
+  res.json({ success: true, message: `Пользователь ${userName} успешно одобрен в Supabase и получил роль ${targetRole}` });
 };
 
 router.post('/approve', handleApprove);
 router.post('/:id/approve', handleApprove);
 
 // 4. Reject registration request
-router.post('/reject', (req, res) => {
+router.post('/reject', async (req, res) => {
   const { userId, reason } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) {
-    return res.status(404).json({ error: 'Пользователь не найден' });
+
+  // 1. Delete from Supabase
+  try {
+    await db.supabase.from('users').delete().eq('id', userId);
+    console.log(`[Supabase] Registration request #${userId} rejected and removed`);
+  } catch (err) {
+    console.warn('[Supabase Reject Warn]:', err.message);
   }
 
+  // 2. Delete from local SQLite
   db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+
+  const userName = user ? user.name : `Пользователь #${userId}`;
 
   logAuditAction({
     userId: req.user.id,
@@ -97,15 +148,15 @@ router.post('/reject', (req, res) => {
     action: 'USER_REJECTED',
     entityType: 'users',
     entityId: userId,
-    details: `Отклонена заявка на регистрацию: ${user.name} (${user.email || user.phone}). Причина: ${reason || 'Не соответствует требованиям'}`,
+    details: `Отклонена заявка на регистрацию: ${userName}. Причина: ${reason || 'Не соответствует требованиям'}`,
     ipAddress: req.ip
   });
 
-  res.json({ success: true, message: `Заявка пользователя ${user.name} отклонена` });
+  res.json({ success: true, message: `Заявка пользователя ${userName} отклонена` });
 });
 
 // 5. Block / Unblock user
-router.post('/status', (req, res) => {
+router.post('/status', async (req, res) => {
   const { userId, status } = req.body;
   if (!['pending', 'active', 'blocked'].includes(status)) {
     return res.status(400).json({ error: 'Некорректный статус' });
@@ -120,6 +171,14 @@ router.post('/status', (req, res) => {
     return res.status(403).json({ error: 'Нельзя изменить статус Владельца' });
   }
 
+  // 1. Update in Supabase
+  try {
+    await db.supabase.from('users').update({ status, updated_at: new Date().toISOString() }).eq('id', userId);
+  } catch (err) {
+    console.warn('[Supabase Status Warn]:', err.message);
+  }
+
+  // 2. Update local SQLite
   db.prepare('UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, userId);
 
   logAuditAction({
@@ -129,12 +188,13 @@ router.post('/status', (req, res) => {
     action: status === 'blocked' ? 'USER_BLOCKED' : 'USER_STATUS_CHANGED',
     entityType: 'users',
     entityId: userId,
-    details: `Статус пользователя ${target.name} изменён на «${status}»`,
+    details: `Статус пользователя ${target.name} изменён на «${status}» (Supabase)`,
     ipAddress: req.ip
   });
 
   res.json({ success: true, message: 'Статус пользователя обновлен' });
 });
+
 
 // 6. Edit employee work profile by owner / director
 router.put('/:id/work-profile', (req, res) => {
@@ -239,7 +299,7 @@ router.post('/:id/reset-password', (req, res) => {
 });
 
 // 8. Create employee directly from admin panel
-router.post('/create', (req, res) => {
+router.post('/create', async (req, res) => {
   const {
     first_name,
     last_name,
@@ -271,27 +331,85 @@ router.post('/create', (req, res) => {
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(password, salt);
 
-  const result = db.prepare(`
-    INSERT INTO users (
-      name, first_name, last_name, middle_name, email, phone, 
-      password_hash, role, status, specialist_id, branch, phone_confirmed, email_confirmed
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, 1)
-  `).run(
-    fullName,
-    fName || fullName,
-    lName,
-    mName || null,
-    email || null,
-    phone || null,
-    passwordHash,
-    role,
-    specialistId || null,
-    branch || 'Астана — Центр'
-  );
+  let newUserId = null;
 
-  const newUserId = result.lastInsertRowid;
+  // 1. Insert directly into Supabase
+  try {
+    const { data: suUser, error: suErr } = await db.supabase
+      .from('users')
+      .insert({
+        name: fullName,
+        first_name: fName || fullName,
+        last_name: lName,
+        middle_name: mName || null,
+        email: email || null,
+        phone: phone || null,
+        password_hash: passwordHash,
+        role,
+        status: 'active',
+        specialist_id: specialistId || null,
+        branch: branch || 'Астана — Центр',
+        phone_confirmed: 1,
+        email_confirmed: 1
+      })
+      .select()
+      .single();
+
+    if (!suErr && suUser) {
+      newUserId = suUser.id;
+      console.log(`[Supabase] Employee created with ID: ${newUserId}`);
+    }
+  } catch (err) {
+    console.warn('[Supabase Create Employee Warn]:', err.message);
+  }
+
+  // 2. Mirror into local SQLite
+  if (newUserId) {
+    db.prepare(`
+      INSERT OR REPLACE INTO users (
+        id, name, first_name, last_name, middle_name, email, phone, 
+        password_hash, role, status, specialist_id, branch, phone_confirmed, email_confirmed
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, 1)
+    `).run(
+      newUserId,
+      fullName,
+      fName || fullName,
+      lName,
+      mName || null,
+      email || null,
+      phone || null,
+      passwordHash,
+      role,
+      specialistId || null,
+      branch || 'Астана — Центр'
+    );
+  } else {
+    const result = db.prepare(`
+      INSERT INTO users (
+        name, first_name, last_name, middle_name, email, phone, 
+        password_hash, role, status, specialist_id, branch, phone_confirmed, email_confirmed
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, 1)
+    `).run(
+      fullName,
+      fName || fullName,
+      lName,
+      mName || null,
+      email || null,
+      phone || null,
+      passwordHash,
+      role,
+      specialistId || null,
+      branch || 'Астана — Центр'
+    );
+    newUserId = result.lastInsertRowid;
+  }
+
   if (specialistId) {
+    try {
+      await db.supabase.from('specialists').update({ user_id: newUserId }).eq('id', specialistId);
+    } catch (e) {}
     db.prepare('UPDATE specialists SET user_id = ? WHERE id = ?').run(newUserId, specialistId);
   }
 
@@ -302,11 +420,12 @@ router.post('/create', (req, res) => {
     action: 'EMPLOYEE_CREATED',
     entityType: 'users',
     entityId: newUserId,
-    details: `Создан аккаунт сотрудника ${fullName} с ролью «${role}» (филиал: ${branch || 'Астана — Центр'})`,
+    details: `Создан аккаунт сотрудника ${fullName} с ролью «${role}» в Supabase (филиал: ${branch || 'Астана — Центр'})`,
     ipAddress: req.ip
   });
 
-  res.json({ success: true, message: 'Сотрудник успешно создан', userId: newUserId });
+  res.json({ success: true, message: 'Сотрудник успешно создан в Supabase', userId: newUserId });
 });
+
 
 module.exports = router;

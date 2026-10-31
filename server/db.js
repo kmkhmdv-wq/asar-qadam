@@ -307,4 +307,47 @@ function runMigrations() {
 initSchema();
 runMigrations();
 
+// Integrate Supabase Client & Replication
+const {
+  supabase,
+  pool,
+  replicateToSupabase,
+  syncFromSupabase,
+  getSupabaseHealth
+} = require('./services/supabaseSync');
+
+// Intercept prepare().run() to replicate write queries directly to Supabase Postgres
+const originalPrepare = db.prepare.bind(db);
+db.prepare = function(sql) {
+  const stmt = originalPrepare(sql);
+  const originalRun = stmt.run.bind(stmt);
+
+  stmt.run = function(...params) {
+    const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+    const res = originalRun(...flatParams);
+
+    // Asynchronously replicate write queries to Supabase
+    const isWrite = /^\s*(INSERT|UPDATE|DELETE|REPLACE)\s+/i.test(sql);
+    if (isWrite) {
+      replicateToSupabase(sql, flatParams);
+    }
+
+    return res;
+  };
+
+  return stmt;
+};
+
+// Export Supabase client and sync helpers
+db.supabase = supabase;
+db.pool = pool;
+db.syncFromSupabase = () => syncFromSupabase(db);
+db.getSupabaseHealth = getSupabaseHealth;
+
+// Trigger initial sync from Supabase in background
+syncFromSupabase(db).catch(err => {
+  console.warn('[Supabase Initial Sync Warn]:', err.message);
+});
+
 module.exports = db;
+

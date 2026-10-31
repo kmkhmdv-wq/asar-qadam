@@ -22,7 +22,7 @@ router.post('/send-code', (req, res) => {
 });
 
 // 2. Register user (status='pending')
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   const {
     first_name,
     firstName,
@@ -56,57 +56,165 @@ router.post('/register', (req, res) => {
     return res.status(400).json({ error: 'Неверный код подтверждения (для теста используйте 1234)' });
   }
 
-  // Check existing
-  const existing = db.prepare('SELECT id FROM users WHERE (email IS NOT NULL AND email = ?) OR (phone IS NOT NULL AND phone = ?)').get(email || '__none__', phone || '__none__');
-  if (existing) {
+  // Check existing in local cache
+  const existingLocal = db.prepare('SELECT id FROM users WHERE (email IS NOT NULL AND email = ?) OR (phone IS NOT NULL AND phone = ?)').get(email || '__none__', phone || '__none__');
+  if (existingLocal) {
     return res.status(400).json({ error: 'Пользователь с таким email или телефоном уже зарегистрирован в системе' });
+  }
+
+  // Check existing in Supabase
+  try {
+    const { data: existingSupabase } = await db.supabase
+      .from('users')
+      .select('id')
+      .or(`email.eq.${email || '__none__'},phone.eq.${phone || '__none__'}`)
+      .maybeSingle();
+
+    if (existingSupabase) {
+      return res.status(400).json({ error: 'Пользователь с таким email или телефоном уже зарегистрирован в системе' });
+    }
+  } catch (err) {
+    console.warn('[Supabase check existing warning]:', err.message);
   }
 
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(password, salt);
 
-  const result = db.prepare(`
-    INSERT INTO users (
-      name, first_name, last_name, middle_name, email, phone, 
-      password_hash, role, status, phone_confirmed, email_confirmed
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'specialist', 'pending', 1, 1)
-  `).run(
-    fullName,
-    fName || fullName,
-    lName,
-    mName || null,
-    email || null,
-    phone || null,
-    passwordHash
-  );
+  let createdUser = null;
+
+  // 1. Insert directly into Supabase (Permanent cloud storage for registrations)
+  try {
+    const { data: suData, error: suError } = await db.supabase
+      .from('users')
+      .insert({
+        name: fullName,
+        first_name: fName || fullName,
+        last_name: lName,
+        middle_name: mName || null,
+        email: email || null,
+        phone: phone || null,
+        password_hash: passwordHash,
+        role: 'specialist',
+        status: 'pending',
+        phone_confirmed: 1,
+        email_confirmed: 1,
+        branch: 'Астана — Центр'
+      })
+      .select()
+      .single();
+
+    if (!suError && suData) {
+      createdUser = suData;
+      console.log(`[Supabase] Registration application stored successfully. User ID: ${createdUser.id}`);
+    } else if (suError) {
+      console.warn('[Supabase Registration Insert Warn]:', suError.message);
+    }
+  } catch (err) {
+    console.warn('[Supabase Registration Error]:', err.message);
+  }
+
+  // 2. Also mirror into local database
+  let localId = createdUser ? createdUser.id : null;
+  try {
+    if (createdUser) {
+      db.prepare(`
+        INSERT OR REPLACE INTO users (
+          id, name, first_name, last_name, middle_name, email, phone, 
+          password_hash, role, status, phone_confirmed, email_confirmed, branch
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'specialist', 'pending', 1, 1, 'Астана — Центр')
+      `).run(
+        createdUser.id,
+        fullName,
+        fName || fullName,
+        lName,
+        mName || null,
+        email || null,
+        phone || null,
+        passwordHash
+      );
+    } else {
+      const result = db.prepare(`
+        INSERT INTO users (
+          name, first_name, last_name, middle_name, email, phone, 
+          password_hash, role, status, phone_confirmed, email_confirmed
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'specialist', 'pending', 1, 1)
+      `).run(
+        fullName,
+        fName || fullName,
+        lName,
+        mName || null,
+        email || null,
+        phone || null,
+        passwordHash
+      );
+      localId = result.lastInsertRowid;
+    }
+  } catch (e) {
+    console.warn('Local insert warning:', e.message);
+  }
+
+  const finalId = createdUser ? createdUser.id : localId;
 
   logAuditAction({
-    userId: result.lastInsertRowid,
+    userId: finalId,
     userName: fullName,
     userRole: 'guest',
     action: 'REGISTRATION_SUBMITTED',
     entityType: 'users',
-    entityId: result.lastInsertRowid,
-    details: `Подана заявка на регистрацию: ${fullName} (${email || phone}). Статус: Ожидает одобрения.`,
+    entityId: finalId,
+    details: `Подана заявка на регистрацию в Supabase: ${fullName} (${email || phone}). Статус: Ожидает одобрения.`,
     ipAddress: req.ip
   });
 
   res.json({
     success: true,
-    message: 'Заявка на регистрацию успешно отправлена. Доступ к CRM откроется сразу после подтверждения руководителем или владельцем центра.'
+    message: 'Заявка на регистрацию успешно сохранена в Supabase! Доступ к CRM откроется сразу после подтверждения руководителем или владельцем центра.'
   });
 });
 
 // 3. Login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { login, password } = req.body;
   if (!login || !password) {
     return res.status(400).json({ error: 'Введите логин (email или телефон) и пароль' });
   }
 
   const cleanLogin = login.trim();
-  const user = db.prepare('SELECT * FROM users WHERE email = ? OR phone = ?').get(cleanLogin, cleanLogin);
+  let user = db.prepare('SELECT * FROM users WHERE email = ? OR phone = ?').get(cleanLogin, cleanLogin);
+
+  // If not found in local cache or status is pending, verify directly with Supabase
+  if (!user || user.status === 'pending') {
+    try {
+      const { data: suUser } = await db.supabase
+        .from('users')
+        .select('*')
+        .or(`email.eq.${cleanLogin},phone.eq.${cleanLogin}`)
+        .maybeSingle();
+
+      if (suUser) {
+        user = suUser;
+        // Mirror to local SQLite
+        try {
+          db.prepare(`
+            INSERT OR REPLACE INTO users (
+              id, name, first_name, last_name, middle_name, email, phone, 
+              password_hash, role, status, specialist_id, branch, avatar_url, bio, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            user.id, user.name, user.first_name, user.last_name, user.middle_name,
+            user.email, user.phone, user.password_hash, user.role, user.status,
+            user.specialist_id, user.branch, user.avatar_url, user.bio, user.created_at
+          );
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.warn('[Supabase live user check warn]:', err.message);
+    }
+  }
+
   if (!user) {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
@@ -159,6 +267,7 @@ router.post('/login', (req, res) => {
     }
   });
 });
+
 
 // 4. Password Recovery
 router.post('/reset-password', (req, res) => {

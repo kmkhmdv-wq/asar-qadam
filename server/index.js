@@ -23,6 +23,8 @@ app.use('/api/audit', require('./routes/audit'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/directions', require('./routes/directions'));
 
+const db = require('./db');
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -32,6 +34,12 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+app.get('/api/health/supabase', async (req, res) => {
+  const health = await db.getSupabaseHealth();
+  res.json(health);
+});
+
 
 // Serve static frontend in production if built
 const distPath = path.join(__dirname, '../dist');
