@@ -157,6 +157,69 @@ router.post('/register', async (req, res) => {
 
   const finalId = createdUser ? createdUser.id : localId;
 
+  // Automatically create linked specialist card so they appear among center specialists for owner, director, admin
+  try {
+    const branchName = 'Астана — Центр';
+    const specDirections = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
+    let specId = null;
+
+    if (db.supabase) {
+      const { data: suSpec } = await db.supabase
+        .from('specialists')
+        .insert({
+          user_id: finalId,
+          full_name: fullName,
+          first_name: fName,
+          last_name: lName,
+          middle_name: mName,
+          phone: phone || '',
+          email: email || null,
+          specialty: 'Специалист центра',
+          position: 'Специалист',
+          branch: branchName,
+          directions: specDirections,
+          default_percentage: 50.0,
+          base_rate: 8000.0,
+          work_days: '["mon","tue","wed","thu","fri","sat"]',
+          work_hours_start: '09:00',
+          work_hours_end: '18:00',
+          is_active: 1,
+          color_badge: '#F47920'
+        })
+        .select()
+        .single();
+      if (suSpec) specId = suSpec.id;
+    }
+
+    if (specId) {
+      db.prepare(`
+        INSERT OR REPLACE INTO specialists (
+          id, user_id, full_name, first_name, last_name, middle_name, phone, email,
+          specialty, position, branch, directions, default_percentage, base_rate,
+          work_days, work_hours_start, work_hours_end, is_active, color_badge
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+      `).run(specId, finalId, fullName, fName, lName, mName, phone || '', email || null, 'Специалист центра', branchName, specDirections);
+    } else {
+      const spRes = db.prepare(`
+        INSERT INTO specialists (
+          user_id, full_name, first_name, last_name, middle_name, phone, email,
+          specialty, position, branch, directions, default_percentage, base_rate,
+          work_days, work_hours_start, work_hours_end, is_active, color_badge
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', 'Астана — Центр', ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+      `).run(finalId, fullName, fName, lName, mName, phone || '', email || null, specDirections);
+      specId = spRes.lastInsertRowid;
+    }
+
+    db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(specId, finalId);
+    if (db.supabase) {
+      db.supabase.from('users').update({ specialist_id: specId }).eq('id', finalId).catch(() => {});
+    }
+    console.log(`[Specialist auto-created]: id=${specId} for user ${fullName}`);
+  } catch (specErr) {
+    console.warn('Specialist auto-create on registration warning:', specErr.message);
+  }
+
+
   logAuditAction({
     userId: finalId,
     userName: fullName,

@@ -4,9 +4,9 @@ const bcrypt = require('bcryptjs');
 const db = require('../db');
 const { authMiddleware, requireRoles, logAuditAction } = require('../auth');
 
-// All endpoints require director or owner access
+// All endpoints require admin, director or owner access
 router.use(authMiddleware);
-router.use(requireRoles('owner', 'director'));
+router.use(requireRoles('owner', 'director', 'admin'));
 
 // 1. List all registered users
 router.get('/', (req, res) => {
@@ -69,8 +69,46 @@ const handleApprove = async (req, res) => {
   if ((targetRole === 'owner' || targetRole === 'director') && req.user.role !== 'owner') {
     return res.status(403).json({ error: 'Только Владелец может назначать роли Руководителя или Владельца' });
   }
+  if (targetRole === 'admin' && !['owner', 'director'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Только Владелец или Руководитель могут назначать роль Администратора' });
+  }
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  let effectiveSpecId = specialistId || (user ? user.specialist_id : null);
+
+  // If approved with role specialist, ensure a specialist profile card exists and is active
+  if (targetRole === 'specialist' && user) {
+    if (!effectiveSpecId) {
+      let existingSp = db.prepare('SELECT id FROM specialists WHERE user_id = ? OR (email IS NOT NULL AND email = ?)').get(userId, user.email || '__none__');
+      if (existingSp) {
+        effectiveSpecId = existingSp.id;
+      } else {
+        const fullName = user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Специалист';
+        const parts = fullName.split(/\s+/);
+        const fName = user.first_name || parts[0] || 'Специалист';
+        const lName = user.last_name || parts.slice(1).join(' ') || '';
+        const mName = user.middle_name || null;
+        const branchName = branch || user.branch || 'Астана — Центр';
+        const specDirections = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
+
+        const spRes = db.prepare(`
+          INSERT INTO specialists (
+            user_id, full_name, first_name, last_name, middle_name, phone, email,
+            specialty, position, branch, directions, default_percentage, base_rate,
+            work_days, work_hours_start, work_hours_end, is_active, color_badge
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+        `).run(userId, fullName, fName, lName, mName, user.phone || '', user.email || null, branchName, specDirections);
+        effectiveSpecId = spRes.lastInsertRowid;
+      }
+    }
+
+    if (effectiveSpecId) {
+      db.prepare('UPDATE specialists SET is_active = 1, user_id = ? WHERE id = ?').run(userId, effectiveSpecId);
+      if (db.supabase) {
+        db.supabase.from('specialists').update({ is_active: 1, user_id: userId }).eq('id', effectiveSpecId).catch(() => {});
+      }
+    }
+  }
 
   // 1. Update in Supabase (Cloud truth)
   try {
@@ -79,15 +117,12 @@ const handleApprove = async (req, res) => {
       .update({
         status: 'active',
         role: targetRole,
-        specialist_id: specialistId || null,
+        specialist_id: effectiveSpecId || null,
         branch: branch || 'Астана — Центр',
         updated_at: new Date().toISOString()
       })
       .eq('id', userId);
 
-    if (specialistId) {
-      await db.supabase.from('specialists').update({ user_id: userId }).eq('id', specialistId);
-    }
     console.log(`[Supabase] User #${userId} approved with role ${targetRole}`);
   } catch (err) {
     console.warn('[Supabase Approve Warn]:', err.message);
@@ -98,11 +133,8 @@ const handleApprove = async (req, res) => {
     UPDATE users 
     SET status = 'active', role = ?, specialist_id = ?, branch = COALESCE(?, branch), updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(targetRole, specialistId || null, branch || 'Астана — Центр', userId);
+  `).run(targetRole, effectiveSpecId || null, branch || 'Астана — Центр', userId);
 
-  if (specialistId) {
-    db.prepare('UPDATE specialists SET user_id = ? WHERE id = ?').run(userId, specialistId);
-  }
 
   const userName = user ? user.name : `Пользователь #${userId}`;
 
@@ -424,12 +456,51 @@ router.post('/create', async (req, res) => {
     newUserId = result.lastInsertRowid;
   }
 
-  if (specialistId) {
+  let effectiveSpecId = specialistId;
+  if (role === 'specialist' && !effectiveSpecId) {
+    const spDirections = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
+    const spRes = db.prepare(`
+      INSERT INTO specialists (
+        user_id, full_name, first_name, last_name, middle_name, phone, email,
+        specialty, position, branch, directions, default_percentage, base_rate,
+        work_days, work_hours_start, work_hours_end, is_active, color_badge
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+    `).run(newUserId, fullName, fName, lName, mName, phone || '', email || null, branch || 'Астана — Центр', spDirections);
+    effectiveSpecId = spRes.lastInsertRowid;
+
+    db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(effectiveSpecId, newUserId);
+    if (db.supabase) {
+      db.supabase.from('specialists').upsert({
+        id: effectiveSpecId,
+        user_id: newUserId,
+        full_name: fullName,
+        first_name: fName,
+        last_name: lName,
+        middle_name: mName,
+        phone: phone || '',
+        email: email || null,
+        specialty: 'Специалист центра',
+        position: 'Специалист',
+        branch: branch || 'Астана — Центр',
+        directions: spDirections,
+        default_percentage: 50.0,
+        base_rate: 8000.0,
+        work_days: '["mon","tue","wed","thu","fri","sat"]',
+        work_hours_start: '09:00',
+        work_hours_end: '18:00',
+        is_active: 1,
+        color_badge: '#F47920'
+      }).then(() => {
+        db.supabase.from('users').update({ specialist_id: effectiveSpecId }).eq('id', newUserId);
+      }).catch(() => {});
+    }
+  } else if (effectiveSpecId) {
     try {
-      await db.supabase.from('specialists').update({ user_id: newUserId }).eq('id', specialistId);
+      await db.supabase.from('specialists').update({ user_id: newUserId }).eq('id', effectiveSpecId);
     } catch (e) {}
-    db.prepare('UPDATE specialists SET user_id = ? WHERE id = ?').run(newUserId, specialistId);
+    db.prepare('UPDATE specialists SET user_id = ? WHERE id = ?').run(newUserId, effectiveSpecId);
   }
+
 
   logAuditAction({
     userId: req.user.id,

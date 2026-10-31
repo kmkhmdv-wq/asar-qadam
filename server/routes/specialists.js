@@ -6,8 +6,106 @@ const { authMiddleware, requireRoles, logAuditAction } = require('../auth');
 
 router.use(authMiddleware);
 
+// Helper: Auto-sync any registered user with role 'specialist' into specialists table
+async function ensureAllSpecialistsSynced() {
+  try {
+    const unlinkedUsers = db.prepare(`
+      SELECT * FROM users 
+      WHERE role = 'specialist' 
+        AND (specialist_id IS NULL OR specialist_id NOT IN (SELECT id FROM specialists))
+    `).all();
+
+    for (const u of unlinkedUsers) {
+      let spec = db.prepare('SELECT id FROM specialists WHERE user_id = ? OR (email IS NOT NULL AND email = ?) OR (phone IS NOT NULL AND phone = ?)').get(u.id, u.email || '__none__', u.phone || '__none__');
+
+      if (spec) {
+        db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(spec.id, u.id);
+        db.prepare('UPDATE specialists SET user_id = ? WHERE id = ?').run(u.id, spec.id);
+        continue;
+      }
+
+      const fullName = u.name || `${u.first_name || ''} ${u.last_name || ''}`.trim() || 'Специалист';
+      const parts = fullName.split(/\s+/);
+      const fName = u.first_name || parts[0] || 'Специалист';
+      const lName = u.last_name || parts.slice(1).join(' ') || '';
+      const mName = u.middle_name || null;
+      const phone = u.phone || '';
+      const email = u.email || null;
+      const branch = u.branch || 'Астана — Центр';
+      const specialty = 'Специалист центра';
+      const directions = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
+      const isActive = u.status === 'blocked' ? 0 : 1;
+
+      // 1. Insert into Supabase
+      let newSpecId = null;
+      if (db.supabase) {
+        try {
+          const { data: suSpec } = await db.supabase
+            .from('specialists')
+            .insert({
+              user_id: u.id,
+              full_name: fullName,
+              first_name: fName,
+              last_name: lName,
+              middle_name: mName,
+              phone,
+              email,
+              specialty,
+              position: 'Специалист',
+              branch,
+              directions,
+              default_percentage: 50.0,
+              base_rate: 8000.0,
+              work_days: '["mon","tue","wed","thu","fri","sat"]',
+              work_hours_start: '09:00',
+              work_hours_end: '18:00',
+              is_active: isActive,
+              color_badge: '#F47920'
+            })
+            .select()
+            .single();
+
+          if (suSpec) newSpecId = suSpec.id;
+        } catch (err) {
+          console.warn('[Supabase spec sync warn]:', err.message);
+        }
+      }
+
+      // 2. Insert into SQLite
+      if (newSpecId) {
+        db.prepare(`
+          INSERT OR REPLACE INTO specialists (
+            id, user_id, full_name, first_name, last_name, middle_name, phone, email,
+            specialty, position, branch, directions, default_percentage, base_rate,
+            work_days, work_hours_start, work_hours_end, is_active, color_badge
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', ?, '#F47920')
+        `).run(newSpecId, u.id, fullName, fName, lName, mName, phone, email, specialty, branch, directions, isActive);
+      } else {
+        const res = db.prepare(`
+          INSERT INTO specialists (
+            user_id, full_name, first_name, last_name, middle_name, phone, email,
+            specialty, position, branch, directions, default_percentage, base_rate,
+            work_days, work_hours_start, work_hours_end, is_active, color_badge
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', ?, '#F47920')
+        `).run(u.id, fullName, fName, lName, mName, phone, email, specialty, branch, directions, isActive);
+        newSpecId = res.lastInsertRowid;
+      }
+
+      db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(newSpecId, u.id);
+      if (db.supabase) {
+        db.supabase.from('users').update({ specialist_id: newSpecId }).eq('id', u.id).catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.warn('[Sync specialists error]:', e.message);
+  }
+}
+
 // 1. Get all specialists (active or all)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  // Always ensure all registered specialist users are synced and visible
+  await ensureAllSpecialistsSynced();
+
   const { include_inactive, branch } = req.query;
   let query = `
     SELECT s.*, u.email as user_email, u.status as user_status, u.role as user_role
@@ -16,6 +114,7 @@ router.get('/', (req, res) => {
     WHERE 1=1
   `;
   const params = [];
+
 
   if (include_inactive !== 'true') {
     query += ' AND s.is_active = 1';

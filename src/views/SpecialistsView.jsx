@@ -237,6 +237,31 @@ export const SpecialistsView = () => {
     }
   };
 
+  // Quick approve pending specialist account
+  const handleQuickApprove = async (sp) => {
+    if (!confirm(`Одобрить доступ в систему для специалиста ${sp.full_name}?`)) return;
+    try {
+      const res = await fetch(`/api/users/approve/${sp.user_id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('asar_token')}`
+        },
+        body: JSON.stringify({
+          assignedRole: 'specialist',
+          branch: sp.branch || 'Астана — Центр',
+          specialistId: sp.id
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка при одобрении');
+      showToast(`Сотрудник ${sp.full_name} успешно одобрен и получил доступ к системе`);
+      fetchData();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   // Direction Modal submit
   const handleSaveDirection = async (e) => {
     e.preventDefault();
@@ -493,16 +518,31 @@ export const SpecialistsView = () => {
                       </div>
                     </div>
 
-                    <span style={{
-                      background: 'var(--color-teal-light)',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      color: 'var(--color-teal)'
-                    }}>
-                      ID #{sp.id}
-                    </span>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      {sp.user_status === 'pending' && (
+                        <span style={{
+                          background: 'rgba(244, 121, 32, 0.12)',
+                          border: '1px solid rgba(244, 121, 32, 0.4)',
+                          color: '#F47920',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: '800'
+                        }}>
+                          Новая заявка
+                        </span>
+                      )}
+                      <span style={{
+                        background: 'var(--color-teal-light)',
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        color: 'var(--color-teal)'
+                      }}>
+                        ID #{sp.id}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Directions pills */}
@@ -585,8 +625,27 @@ export const SpecialistsView = () => {
                       borderTop: '1px solid var(--border-subtle)',
                       display: 'flex',
                       gap: '8px',
-                      justifyContent: 'flex-end'
+                      justifyContent: 'flex-end',
+                      alignItems: 'center',
+                      flexWrap: 'wrap'
                     }}>
+                      {sp.user_status === 'pending' && sp.user_id && (
+                        <button
+                          onClick={() => handleQuickApprove(sp)}
+                          style={{
+                            background: '#F47920',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            fontWeight: '800',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Одобрить доступ
+                        </button>
+                      )}
                       <button
                         onClick={() => handleOpenEdit(sp)}
                         className="btn-secondary"

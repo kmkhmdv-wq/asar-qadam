@@ -147,7 +147,7 @@ export const AuthProvider = ({ children }) => {
   const canAccessAccounting = user && ['owner', 'director', 'admin'].includes(user.role);
   const canManageSchedule = user && ['owner', 'director', 'admin'].includes(user.role);
   const canEditChildren = user && ['owner', 'director', 'admin'].includes(user.role);
-  const canManageUsers = user && ['owner', 'director'].includes(user.role);
+  const canManageUsers = user && ['owner', 'director', 'admin'].includes(user.role);
   const canManagePayroll = user && ['owner', 'director'].includes(user.role);
   const canUseAi = user && ['owner', 'director', 'admin'].includes(user.role);
   const isSpecialist = user && user.role === 'specialist';
