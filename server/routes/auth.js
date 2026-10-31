@@ -168,11 +168,21 @@ router.post('/register', async (req, res) => {
     ipAddress: req.ip
   });
 
+  // Send instant Telegram notification to the group
+  const { notifyNewRegistration } = require('../services/telegramService');
+  notifyNewRegistration({
+    name: fullName,
+    phone,
+    email,
+    branch: 'Астана — Центр'
+  }).catch(err => console.warn('[Telegram Notify Error]:', err.message));
+
   res.json({
     success: true,
-    message: 'Заявка на регистрацию успешно сохранена в Supabase! Доступ к CRM откроется сразу после подтверждения руководителем или владельцем центра.'
+    message: 'Заявка на регистрацию успешно сохранена в Supabase! Оповещение отправлено в Telegram. Доступ к CRM откроется сразу после подтверждения руководителем или владельцем центра.'
   });
 });
+
 
 // 3. Login
 router.post('/login', async (req, res) => {

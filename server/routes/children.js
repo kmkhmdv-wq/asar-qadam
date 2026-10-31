@@ -269,8 +269,26 @@ router.post('/', requireRoles('owner', 'director', 'admin'), (req, res) => {
     ipAddress: req.ip
   });
 
+  // Telegram notification
+  let specName = null;
+  if (assigned_specialist_id) {
+    const sp = db.prepare('SELECT full_name FROM specialists WHERE id = ?').get(assigned_specialist_id);
+    if (sp) specName = sp.full_name;
+  }
+  const { notifyNewChild } = require('../services/telegramService');
+  notifyNewChild({
+    fullName: full_name.trim(),
+    birthDate: birth_date,
+    parentName: parent_name.trim(),
+    parentPhone: parent_phone.trim(),
+    diagnosis,
+    assignedSpecialist: specName,
+    direction
+  }).catch(err => console.warn('[Telegram Notify Error]:', err.message));
+
   res.json({ success: true, id: result.lastInsertRowid, message: 'Карточка ребёнка успешно создана' });
 });
+
 
 // 5. Update child card (admin, director, owner)
 router.put('/:id', requireRoles('owner', 'director', 'admin'), (req, res) => {

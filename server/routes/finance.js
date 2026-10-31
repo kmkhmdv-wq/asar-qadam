@@ -112,11 +112,21 @@ router.post('/payment', (req, res) => {
     ipAddress: req.ip
   });
 
+  // Telegram notification
+  const { notifyPaymentReceived } = require('../services/telegramService');
+  notifyPaymentReceived({
+    childName: child.full_name,
+    amount,
+    paymentMethod: payment_method,
+    createdBy: req.user.name
+  }).catch(err => console.warn('[Telegram Notify Error]:', err.message));
+
   res.json({
     success: true,
     message: `Оплата ${amount} ₸ успешно зарегистрирована`,
     newBalance: child.balance + Number(amount)
   });
 });
+
 
 module.exports = router;

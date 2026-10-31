@@ -117,6 +117,15 @@ const handleApprove = async (req, res) => {
     ipAddress: req.ip
   });
 
+  // Telegram notification
+  const { notifyUserApproved, notifyUserRejected } = require('../services/telegramService');
+  notifyUserApproved({
+    name: userName,
+    role: targetRole,
+    branch: branch || 'Астана — Центр',
+    approvedBy: req.user.name
+  }).catch(err => console.warn('[Telegram Notify Error]:', err.message));
+
   res.json({ success: true, message: `Пользователь ${userName} успешно одобрен в Supabase и получил роль ${targetRole}` });
 };
 
@@ -152,8 +161,17 @@ router.post('/reject', async (req, res) => {
     ipAddress: req.ip
   });
 
+  // Telegram notification
+  const { notifyUserRejected: tgReject } = require('../services/telegramService');
+  tgReject({
+    name: userName,
+    reason,
+    rejectedBy: req.user.name
+  }).catch(err => console.warn('[Telegram Notify Error]:', err.message));
+
   res.json({ success: true, message: `Заявка пользователя ${userName} отклонена` });
 });
+
 
 // 5. Block / Unblock user
 router.post('/status', async (req, res) => {
