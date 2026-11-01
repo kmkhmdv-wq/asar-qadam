@@ -594,7 +594,9 @@ router.post('/login', async (req, res) => {
       branch: user.branch || 'Астана — Центр',
       avatar_url: user.avatar_url,
       bio: user.bio,
-      created_at: user.created_at
+      created_at: user.created_at,
+      is_test: Boolean(user.is_test),
+      must_change_password: Boolean(user.must_change_password)
     }
   });
 });
@@ -627,9 +629,9 @@ router.post('/reset-password', (req, res) => {
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(new_password, salt);
 
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
+  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(passwordHash, user.id);
   if (db.supabase) {
-    db.supabase.from('users').update({ password_hash: passwordHash }).eq('id', user.id).catch(() => {});
+    db.supabase.from('users').update({ password_hash: passwordHash, must_change_password: false }).eq('id', user.id).catch(() => {});
   }
 
   otpStore.delete(cleanLogin);
@@ -651,7 +653,63 @@ router.post('/reset-password', (req, res) => {
   });
 });
 
-// 7. Get current user profile
+// 7. Change Password (for authenticated users or users with must_change_password flag)
+router.post('/change-password', authMiddleware, async (req, res) => {
+  const { current_password, new_password } = req.body;
+
+  if (!new_password || typeof new_password !== 'string' || new_password.length < 6) {
+    return res.status(400).json({ error: 'Новый пароль должен содержать минимум 6 символов' });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) {
+    return res.status(404).json({ error: 'Пользователь не найден' });
+  }
+
+  // If user has a password set, verify current_password
+  if (user.password_hash) {
+    if (!current_password) {
+      return res.status(400).json({ error: 'Укажите текущий пароль' });
+    }
+    const isValid = bcrypt.compareSync(current_password, user.password_hash);
+    if (!isValid) {
+      return res.status(400).json({ error: 'Неверный текущий пароль' });
+    }
+  }
+
+  const salt = bcrypt.genSaltSync(10);
+  const passwordHash = bcrypt.hashSync(new_password, salt);
+
+  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(passwordHash, user.id);
+  if (db.supabase) {
+    try {
+      await db.supabase.from('users').update({ 
+        password_hash: passwordHash, 
+        must_change_password: false 
+      }).eq('id', user.id);
+    } catch (e) {
+      console.warn('[Supabase password update warn]:', e.message);
+    }
+  }
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    userRole: user.role,
+    action: 'PASSWORD_CHANGED',
+    entityType: 'users',
+    entityId: user.id,
+    details: 'Пароль учётной записи успешно изменён',
+    ipAddress: req.ip
+  });
+
+  res.json({
+    success: true,
+    message: 'Пароль успешно изменён'
+  });
+});
+
+// 8. Get current user profile
 router.get('/me', authMiddleware, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) {
@@ -675,7 +733,9 @@ router.get('/me', authMiddleware, (req, res) => {
       branch: user.branch || 'Астана — Центр',
       avatar_url: user.avatar_url,
       bio: user.bio,
-      created_at: user.created_at
+      created_at: user.created_at,
+      is_test: Boolean(user.is_test),
+      must_change_password: Boolean(user.must_change_password)
     }
   });
 });

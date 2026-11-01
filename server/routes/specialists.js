@@ -35,6 +35,7 @@ async function ensureAllSpecialistsSynced() {
       const specialty = 'Специалист центра';
       const directions = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
       const isActive = u.status === 'blocked' ? 0 : 1;
+      const isTest = u.is_test ? 1 : 0;
 
       // 1. Insert into Supabase
       let newSpecId = null;
@@ -60,6 +61,7 @@ async function ensureAllSpecialistsSynced() {
               work_hours_start: '09:00',
               work_hours_end: '18:00',
               is_active: isActive,
+              is_test: Boolean(u.is_test),
               color_badge: '#F47920'
             })
             .select()
@@ -77,17 +79,17 @@ async function ensureAllSpecialistsSynced() {
           INSERT OR REPLACE INTO specialists (
             id, user_id, full_name, first_name, last_name, middle_name, phone, email,
             specialty, position, branch, directions, default_percentage, base_rate,
-            work_days, work_hours_start, work_hours_end, is_active, color_badge
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', ?, '#F47920')
-        `).run(newSpecId, u.id, fullName, fName, lName, mName, phone, email, specialty, branch, directions, isActive);
+            work_days, work_hours_start, work_hours_end, is_active, color_badge, is_test
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', ?, '#F47920', ?)
+        `).run(newSpecId, u.id, fullName, fName, lName, mName, phone, email, specialty, branch, directions, isActive, isTest);
       } else {
         const res = db.prepare(`
           INSERT INTO specialists (
             user_id, full_name, first_name, last_name, middle_name, phone, email,
             specialty, position, branch, directions, default_percentage, base_rate,
-            work_days, work_hours_start, work_hours_end, is_active, color_badge
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', ?, '#F47920')
-        `).run(u.id, fullName, fName, lName, mName, phone, email, specialty, branch, directions, isActive);
+            work_days, work_hours_start, work_hours_end, is_active, color_badge, is_test
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', ?, '#F47920', ?)
+        `).run(u.id, fullName, fName, lName, mName, phone, email, specialty, branch, directions, isActive, isTest);
         newSpecId = res.lastInsertRowid;
       }
 
@@ -106,15 +108,19 @@ router.get('/', async (req, res) => {
   // Always ensure all registered specialist users are synced and visible
   await ensureAllSpecialistsSynced();
 
-  const { include_inactive, branch } = req.query;
+  const { include_inactive, branch, include_test } = req.query;
   let query = `
-    SELECT s.*, u.email as user_email, u.status as user_status, u.role as user_role
+    SELECT s.*, u.email as user_email, u.status as user_status, u.role as user_role,
+           COALESCE(s.is_test, 0) as is_test
     FROM specialists s
     LEFT JOIN users u ON s.user_id = u.id
     WHERE 1=1
   `;
   const params = [];
 
+  if (include_test !== 'true') {
+    query += ' AND (s.is_test = 0 OR s.is_test IS NULL) AND (u.is_test = 0 OR u.is_test IS NULL)';
+  }
 
   if (include_inactive !== 'true') {
     query += ' AND s.is_active = 1';

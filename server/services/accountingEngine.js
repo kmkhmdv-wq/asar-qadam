@@ -4,7 +4,7 @@ const db = require('../db');
  * Get comprehensive financial dashboard statistics
  */
 function getFinancialSummary(period = 'all') {
-  // 1. Total revenue & shares from billable transactions
+  // 1. Total revenue & shares from billable transactions (excluding test accounts)
   const totals = db.prepare(`
     SELECT 
       COALESCE(SUM(amount_gross), 0) as total_gross,
@@ -12,13 +12,16 @@ function getFinancialSummary(period = 'all') {
       COALESCE(SUM(center_share), 0) as total_center_net,
       COUNT(id) as total_transactions
     FROM financial_transactions 
-    WHERE type = 'session_revenue' AND status != 'cancelled'
+    WHERE type = 'session_revenue' 
+      AND status != 'cancelled'
+      AND (specialist_id IS NULL OR specialist_id NOT IN (SELECT id FROM specialists WHERE is_test = 1))
   `).get();
 
-  // 2. Total payouts made to specialists
+  // 2. Total payouts made to specialists (excluding test specialists)
   const payoutTotals = db.prepare(`
     SELECT COALESCE(SUM(amount), 0) as total_payouts_made
     FROM payouts
+    WHERE specialist_id NOT IN (SELECT id FROM specialists WHERE is_test = 1)
   `).get();
 
   // 3. Client receivables (unpaid sessions and negative balances)
@@ -44,7 +47,7 @@ function getFinancialSummary(period = 'all') {
   const now = new Date();
   const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   
-  // Today's revenue
+  // Today's revenue (excluding test accounts)
   const todayRevenue = db.prepare(`
     SELECT 
       COALESCE(SUM(amount_gross), 0) as today_gross,
@@ -55,9 +58,10 @@ function getFinancialSummary(period = 'all') {
     WHERE type = 'session_revenue' 
       AND status != 'cancelled' 
       AND date(created_at) = date('now')
+      AND (specialist_id IS NULL OR specialist_id NOT IN (SELECT id FROM specialists WHERE is_test = 1))
   `).get();
 
-  // Month revenue
+  // Month revenue (excluding test accounts)
   const monthRevenue = db.prepare(`
     SELECT 
       COALESCE(SUM(amount_gross), 0) as month_gross,
@@ -68,9 +72,10 @@ function getFinancialSummary(period = 'all') {
     WHERE type = 'session_revenue' 
       AND status != 'cancelled' 
       AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+      AND (specialist_id IS NULL OR specialist_id NOT IN (SELECT id FROM specialists WHERE is_test = 1))
   `).get();
 
-  // 5. Specialist earnings summary table
+  // 5. Specialist earnings summary table (excluding test accounts)
   const specialistStats = db.prepare(`
     SELECT 
       s.id,
@@ -87,11 +92,11 @@ function getFinancialSummary(period = 'all') {
     LEFT JOIN schedule_sessions sc ON s.id = sc.specialist_id
     LEFT JOIN attendance a ON sc.id = a.session_id AND a.status = 'present'
     LEFT JOIN financial_transactions ft ON a.id = ft.attendance_id AND ft.type = 'session_revenue' AND ft.status != 'cancelled'
-    WHERE s.is_active = 1
+    WHERE s.is_active = 1 AND (s.is_test = 0 OR s.is_test IS NULL)
     GROUP BY s.id
   `).all();
 
-  // 6. Monthly trends (last 6 months)
+  // 6. Monthly trends (last 6 months, excluding test accounts)
   const monthlyTrends = db.prepare(`
     SELECT 
       strftime('%Y-%m', created_at) as month,
@@ -101,12 +106,13 @@ function getFinancialSummary(period = 'all') {
       COUNT(id) as sessions
     FROM financial_transactions
     WHERE type = 'session_revenue' AND status != 'cancelled'
+      AND (specialist_id IS NULL OR specialist_id NOT IN (SELECT id FROM specialists WHERE is_test = 1))
     GROUP BY month
     ORDER BY month DESC
     LIMIT 6
   `).all().reverse();
 
-  // 7. Daily trends (last 7 days)
+  // 7. Daily trends (last 7 days, excluding test accounts)
   const dailyTrends = db.prepare(`
     SELECT 
       strftime('%d.%m', created_at) as day,
@@ -116,6 +122,7 @@ function getFinancialSummary(period = 'all') {
       COUNT(id) as sessions
     FROM financial_transactions
     WHERE type = 'session_revenue' AND status != 'cancelled'
+      AND (specialist_id IS NULL OR specialist_id NOT IN (SELECT id FROM specialists WHERE is_test = 1))
     GROUP BY day
     ORDER BY date(created_at) DESC
     LIMIT 7

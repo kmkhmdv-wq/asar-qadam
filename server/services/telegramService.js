@@ -78,7 +78,12 @@ async function sendTelegramMessage(text, extra = {}) {
 /**
  * 1. Notification: New User Registration Application (Pending)
  */
-async function notifyNewRegistration({ name, phone, email, branch }) {
+async function notifyNewRegistration({ name, phone, email, branch, is_test }) {
+  if (is_test || (email && email.toLowerCase().includes('test+')) || (name && name.toLowerCase().includes('тест'))) {
+    console.log('[Telegram Skipped] Test account registration, notification suppressed:', email || name);
+    return true;
+  }
+
   const message = [
     `🔔 <b>Новая заявка на регистрацию!</b>`,
     ``,
@@ -97,7 +102,12 @@ async function notifyNewRegistration({ name, phone, email, branch }) {
 /**
  * 2. Notification: User Approved
  */
-async function notifyUserApproved({ name, role, branch, approvedBy }) {
+async function notifyUserApproved({ name, role, branch, approvedBy, is_test, email }) {
+  if (is_test || (email && email.toLowerCase().includes('test+')) || (name && name.toLowerCase().includes('тест'))) {
+    console.log('[Telegram Skipped] Test account approval, notification suppressed:', name);
+    return true;
+  }
+
   const roleNames = {
     owner: 'Владелец',
     director: 'Руководитель',
@@ -120,7 +130,12 @@ async function notifyUserApproved({ name, role, branch, approvedBy }) {
 /**
  * 3. Notification: User Rejected
  */
-async function notifyUserRejected({ name, reason, rejectedBy }) {
+async function notifyUserRejected({ name, reason, rejectedBy, is_test, email }) {
+  if (is_test || (email && email.toLowerCase().includes('test+')) || (name && name.toLowerCase().includes('тест'))) {
+    console.log('[Telegram Skipped] Test account rejection, notification suppressed:', name);
+    return true;
+  }
+
   const message = [
     `❌ <b>Заявка на регистрацию отклонена</b>`,
     ``,

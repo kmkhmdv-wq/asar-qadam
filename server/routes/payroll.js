@@ -10,7 +10,7 @@ router.use(requireRoles('owner', 'director'));
 router.get('/', (req, res) => {
   const { periodStart, periodEnd } = req.query;
 
-  const specialists = db.prepare('SELECT * FROM specialists WHERE is_active = 1 ORDER BY full_name ASC').all();
+  const specialists = db.prepare('SELECT * FROM specialists WHERE is_active = 1 AND (is_test = 0 OR is_test IS NULL) ORDER BY full_name ASC').all();
 
   const payrollData = specialists.map(s => {
     // 1. Completed and billable sessions

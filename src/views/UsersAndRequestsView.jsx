@@ -51,24 +51,25 @@ export const UsersAndRequestsView = () => {
   const [resetTargetUser, setResetTargetUser] = useState(null);
   const [newPasswordVal, setNewPasswordVal] = useState('AsarQadam2026!');
 
+  const [showTestAccounts, setShowTestAccounts] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
-    fetchUsersData();
+    fetchUsersData(showTestAccounts);
     fetchSpecialists();
-  }, []);
+  }, [showTestAccounts]);
 
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 5000);
   };
 
-  const fetchUsersData = async () => {
+  const fetchUsersData = async (includeTest = showTestAccounts) => {
     setLoading(true);
     try {
       const [uRes, pRes] = await Promise.all([
-        fetch('/api/users', {
+        fetch(`/api/users?include_test=${includeTest ? 'true' : 'false'}`, {
           headers: { Authorization: `Bearer ${localStorage.getItem('asar_token')}` }
         }),
         fetch('/api/users/pending', {
@@ -361,9 +362,10 @@ export const UsersAndRequestsView = () => {
     return matchesSearch && matchesRole;
   });
 
-  const countSpecialists = users.filter(u => u.role === 'specialist').length;
-  const countDirectors = users.filter(u => u.role === 'director').length;
-  const countAdmins = users.filter(u => u.role === 'admin').length;
+  const realUsers = users.filter(u => !u.is_test);
+  const countSpecialists = realUsers.filter(u => u.role === 'specialist').length;
+  const countDirectors = realUsers.filter(u => u.role === 'director').length;
+  const countAdmins = realUsers.filter(u => u.role === 'admin').length;
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: '1440px', margin: '0 auto' }}>
@@ -412,7 +414,7 @@ export const UsersAndRequestsView = () => {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', marginBottom: '16px' }}>
               <h2 style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>
-                {users.length} активных сотрудников
+                {realUsers.length} активных сотрудников
               </h2>
               <p className="text-subtitle">
                 Динамическое управление правами: изменение роли сотрудника мгновенно активирует соответствующие права и обновляет интерфейс без необходимости повторной регистрации.
@@ -622,6 +624,30 @@ export const UsersAndRequestsView = () => {
               <option value="director">Руководители</option>
               <option value="owner">Владельцы</option>
             </select>
+
+            {/* Filter: Show QA test accounts (default off) */}
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              color: showTestAccounts ? '#F47920' : 'var(--text-secondary)',
+              fontWeight: '700',
+              background: showTestAccounts ? 'rgba(244, 121, 32, 0.1)' : 'var(--surface-subtle)',
+              border: showTestAccounts ? '1px solid #F47920' : '1px solid var(--border-light)',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              userSelect: 'none'
+            }}>
+              <input
+                type="checkbox"
+                checked={showTestAccounts}
+                onChange={e => setShowTestAccounts(e.target.checked)}
+                style={{ accentColor: '#F47920', cursor: 'pointer' }}
+              />
+              <span>Показать тестовые аккаунты (QA)</span>
+            </label>
           </div>
         </div>
 
@@ -678,9 +704,24 @@ export const UsersAndRequestsView = () => {
                             {u.name ? u.name.charAt(0) : 'U'}
                           </div>
                           <div>
-                            <strong style={{ color: 'var(--text-dark)', fontSize: '14px', display: 'block' }}>
-                              {u.name}
-                            </strong>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <strong style={{ color: 'var(--text-dark)', fontSize: '14px' }}>
+                                {u.name}
+                              </strong>
+                              {Boolean(u.is_test) && (
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: '800',
+                                  color: '#F47920',
+                                  background: 'rgba(244, 121, 32, 0.12)',
+                                  border: '1px solid rgba(244, 121, 32, 0.4)',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px'
+                                }}>
+                                  QA ТЕСТ
+                                </span>
+                              )}
+                            </div>
                             {isCurrentLoggedUser && (
                               <span style={{ fontSize: '10px', color: '#F47920', fontWeight: '800' }}>
                                 (Вы)

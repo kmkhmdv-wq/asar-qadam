@@ -136,6 +136,7 @@ async function syncFromSupabase(sqliteDb) {
         const placeholders = keys.map(() => '?').join(', ');
         const values = keys.map(k => {
           const val = row[k];
+          if (typeof val === 'boolean') return val ? 1 : 0;
           if (val instanceof Date) return val.toISOString();
           if (typeof val === 'object' && val !== null) return JSON.stringify(val);
           return val;

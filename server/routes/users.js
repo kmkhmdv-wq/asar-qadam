@@ -10,12 +10,17 @@ router.use(requireRoles('owner', 'director', 'admin'));
 
 // 1. List all registered users
 router.get('/', (req, res) => {
+  const includeTest = req.query.include_test === 'true' || req.query.show_test === 'true';
+  const filterClause = includeTest ? '' : 'WHERE (u.is_test = 0 OR u.is_test IS NULL)';
+
   const users = db.prepare(`
     SELECT u.id, u.name, u.first_name, u.last_name, u.middle_name, u.email, u.phone, 
            u.role, u.status, u.specialist_id, u.branch, u.avatar_url, u.created_at,
+           COALESCE(u.is_test, 0) as is_test, COALESCE(u.must_change_password, 0) as must_change_password,
            s.specialty, s.full_name as specialist_name
     FROM users u
     LEFT JOIN specialists s ON u.specialist_id = s.id
+    ${filterClause}
     ORDER BY u.created_at DESC
   `).all();
   res.json({ users });
@@ -26,8 +31,9 @@ router.get('/pending', async (req, res) => {
   try {
     const { data: suRequests, error } = await db.supabase
       .from('users')
-      .select('id, name, first_name, last_name, middle_name, email, phone, role, status, branch, created_at')
+      .select('id, name, first_name, last_name, middle_name, email, phone, role, status, branch, is_test, created_at')
       .eq('status', 'pending')
+      .or('is_test.is.null,is_test.eq.false')
       .order('created_at', { ascending: false });
 
     if (!error && suRequests) {
@@ -35,9 +41,9 @@ router.get('/pending', async (req, res) => {
       for (const r of suRequests) {
         try {
           db.prepare(`
-            INSERT OR REPLACE INTO users (id, name, first_name, last_name, middle_name, email, phone, role, status, branch, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(r.id, r.name, r.first_name, r.last_name, r.middle_name, r.email, r.phone, r.role, r.status, r.branch, r.created_at);
+            INSERT OR REPLACE INTO users (id, name, first_name, last_name, middle_name, email, phone, role, status, branch, is_test, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(r.id, r.name, r.first_name, r.last_name, r.middle_name, r.email, r.phone, r.role, r.status, r.branch, r.is_test ? 1 : 0, r.created_at);
         } catch (e) {}
       }
       return res.json({ requests: suRequests });
@@ -49,7 +55,7 @@ router.get('/pending', async (req, res) => {
   const requests = db.prepare(`
     SELECT id, name, first_name, last_name, middle_name, email, phone, role, status, branch, created_at
     FROM users
-    WHERE status = 'pending'
+    WHERE status = 'pending' AND (is_test = 0 OR is_test IS NULL)
     ORDER BY created_at DESC
   `).all();
   res.json({ requests });

@@ -226,6 +226,8 @@ function runMigrations() {
   if (!userCols.includes('phone_verified')) db.exec('ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0');
   if (!userCols.includes('phone_verified_at')) db.exec('ALTER TABLE users ADD COLUMN phone_verified_at DATETIME');
   if (!userCols.includes('tg_chat_id')) db.exec('ALTER TABLE users ADD COLUMN tg_chat_id INTEGER');
+  if (!userCols.includes('is_test')) db.exec('ALTER TABLE users ADD COLUMN is_test INTEGER DEFAULT 0');
+  if (!userCols.includes('must_change_password')) db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0');
 
   // Create tg_verifications table locally if not exists
   db.exec(`
@@ -265,6 +267,7 @@ function runMigrations() {
   if (!specCols.includes('session_duration_minutes')) db.exec('ALTER TABLE specialists ADD COLUMN session_duration_minutes INTEGER DEFAULT 45');
   if (!specCols.includes('start_date')) db.exec("ALTER TABLE specialists ADD COLUMN start_date TEXT DEFAULT '2024-01-15'");
   if (!specCols.includes('notes')) db.exec('ALTER TABLE specialists ADD COLUMN notes TEXT');
+  if (!specCols.includes('is_test')) db.exec('ALTER TABLE specialists ADD COLUMN is_test INTEGER DEFAULT 0');
 
   // Populate specialist first_name / last_name and directions
   const specsToUpdate = db.prepare("SELECT id, full_name, specialty, directions FROM specialists").all();
