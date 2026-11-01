@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { SvgIcon } from '../components/icons/CustomIcons';
+import { startTelegramVerification, verifyTelegramCode } from '../services/telegramVerification';
 
 export const AuthView = () => {
   const { login, register, resetPassword } = useAuth();
@@ -125,6 +126,35 @@ export const AuthView = () => {
       }
     } catch (err) {
       setRegError(err.message);
+    }
+  };
+
+  const [tgLink, setTgLink] = useState(null);
+  const [tgLoading, setTgLoading] = useState(false);
+
+  const handleStartTelegramAuth = async () => {
+    const fullPhone = getFullPhone();
+    const rawDigits = regForm.phoneRaw.replace(/\D/g, '');
+    if (rawDigits.length < 8) {
+      setRegError('Укажите корректный номер телефона');
+      return;
+    }
+
+    setRegError(null);
+    setTgLoading(true);
+    try {
+      const res = await startTelegramVerification(0, fullPhone);
+      setTgLink(res.link);
+      setSmsSent(true);
+      setSmsCooldown(60);
+      setCodeStatusMsg('Бот открыт в Telegram! Нажмите «📱 Поделиться номером» и введите 6-значный код:');
+      if (res.link) {
+        window.open(res.link, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      setRegError(err.message || 'Ошибка запуска Telegram верификации');
+    } finally {
+      setTgLoading(false);
     }
   };
 
@@ -541,29 +571,52 @@ export const AuthView = () => {
                   border: `1px solid ${phoneVerified ? 'rgba(112, 183, 126, 0.6)' : 'var(--border-medium)'}`,
                   marginBottom: '12px'
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <label className="text-label-muted" style={{ margin: 0 }}>Номер телефона (с SMS) *:</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <label className="text-label-muted" style={{ margin: 0 }}>Номер телефона *:</label>
                     {phoneVerified ? (
                       <span style={{ fontSize: '11px', color: 'var(--color-green)', fontWeight: '800' }}>
                         ✓ Номер подтверждён
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={handleSendSmsCode}
-                        disabled={smsCooldown > 0}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: smsCooldown > 0 ? 'var(--text-muted)' : '#F47920',
-                          fontSize: '11px',
-                          fontWeight: '800',
-                          cursor: smsCooldown > 0 ? 'default' : 'pointer',
-                          padding: 0
-                        }}
-                      >
-                        {smsCooldown > 0 ? `Повтор через ${smsCooldown}с` : (smsSent ? 'Отправить код повторно' : 'Получить SMS-код')}
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={handleStartTelegramAuth}
+                          disabled={smsCooldown > 0 || tgLoading}
+                          style={{
+                            background: '#16161D',
+                            border: '1px solid #2D2D38',
+                            color: '#F47920',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            cursor: smsCooldown > 0 ? 'default' : 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px'
+                          }}
+                        >
+                          <SvgIcon name="telegram" size={13} color="#F47920" />
+                          <span>{smsCooldown > 0 ? `${smsCooldown}с` : 'Telegram-код'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSendSmsCode}
+                          disabled={smsCooldown > 0}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: smsCooldown > 0 ? 'var(--text-muted)' : 'var(--text-secondary)',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            cursor: smsCooldown > 0 ? 'default' : 'pointer',
+                            padding: 0
+                          }}
+                        >
+                          {smsSent ? 'Повтор SMS' : 'SMS'}
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -594,11 +647,14 @@ export const AuthView = () => {
                     <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
                       <input
                         type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
                         className="form-input"
-                        placeholder="6-значный код из SMS"
+                        placeholder="6-значный код (Telegram/SMS)"
                         value={regForm.verification_code}
-                        onChange={e => setRegForm({ ...regForm, verification_code: e.target.value })}
-                        style={{ flex: 1 }}
+                        onChange={e => setRegForm({ ...regForm, verification_code: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                        style={{ flex: 1, letterSpacing: '0.15em', fontWeight: '700' }}
                       />
                       <button
                         type="button"

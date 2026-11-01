@@ -170,6 +170,34 @@ export const SvgIcon = ({ name, size = 18, color = 'currentColor', className = '
           <line x1="16" y1="16" x2="16" y2="16" />
         </svg>
       );
+    case 'telegram':
+      return (
+        <svg {...props}>
+          <path d="M21.5 2.5L2 10.5l6.5 2.5 2.5 6.5 3.5-3.5 5 4.5 2-18z" />
+          <path d="M8.5 13l7.5-6.5-6 8" />
+        </svg>
+      );
+    case 'shield-check':
+      return (
+        <svg {...props}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <polyline points="9 12 11 14 15 10" />
+        </svg>
+      );
+    case 'phone':
+      return (
+        <svg {...props}>
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+        </svg>
+      );
+    case 'refresh':
+      return (
+        <svg {...props}>
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      );
     default:
       return (
         <svg {...props}>
