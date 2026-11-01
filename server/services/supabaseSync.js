@@ -28,40 +28,75 @@ function convertSql(sql) {
   return sql.replace(/\?/g, () => `$${paramIndex++}`);
 }
 
-let isSyncing = false;
+const pendingWrites = new Set();
 
-/**
- * Asynchronously replicates a write query to Supabase PostgreSQL
- */
-async function replicateToSupabase(sql, params = []) {
-  if (isSyncing) return;
-  try {
-    const isWrite = /^\s*(INSERT|UPDATE|DELETE|REPLACE)\s+/i.test(sql);
-    if (!isWrite) return;
-
-    let pgSql = convertSql(sql);
-    
-    // Replace SQLite REPLACE with PostgreSQL equivalent
-    if (/^\s*INSERT\s+OR\s+REPLACE\s+INTO/i.test(pgSql)) {
-      pgSql = pgSql.replace(/^\s*INSERT\s+OR\s+REPLACE\s+INTO/i, 'INSERT INTO');
-      if (!/ON\s+CONFLICT/i.test(pgSql)) {
-        pgSql += ' ON CONFLICT (id) DO NOTHING';
-      }
-    } else if (/^\s*INSERT\s+OR\s+IGNORE\s+INTO/i.test(pgSql)) {
-      pgSql = pgSql.replace(/^\s*INSERT\s+OR\s+IGNORE\s+INTO/i, 'INSERT INTO');
-      if (!/ON\s+CONFLICT/i.test(pgSql)) {
-        pgSql += ' ON CONFLICT (id) DO NOTHING';
-      }
-    }
-
-    const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
-    await pool.query(pgSql, flatParams);
-  } catch (err) {
-    // Non-fatal warning so local operations succeed even if network blips
-    console.warn('[Supabase Replication Warn]:', err.message, 'Query:', sql.slice(0, 80));
-  }
+function trackWrite(promise) {
+  pendingWrites.add(promise);
+  promise.finally(() => pendingWrites.delete(promise));
+  return promise;
 }
 
+async function flushPendingWrites() {
+  if (pendingWrites.size === 0) return;
+  await Promise.allSettled(Array.from(pendingWrites));
+}
+
+/**
+ * Replicates a write query to Supabase PostgreSQL, ensuring ID and conflict alignment
+ */
+async function replicateToSupabase(sql, params = [], lastInsertRowid = null) {
+  if (isSyncing) return;
+  const writePromise = (async () => {
+    try {
+      const isWrite = /^\s*(INSERT|UPDATE|DELETE|REPLACE)\s+/i.test(sql);
+      if (!isWrite) return;
+
+      let pgSql = sql.trim();
+      let flatParams = params.length === 1 && Array.isArray(params[0]) ? [...params[0]] : [...params];
+
+      // Replace date('now') with CURRENT_DATE
+      pgSql = pgSql.replace(/date\('now'\)/gi, 'CURRENT_DATE');
+      // Replace SQLite strftime
+      pgSql = pgSql.replace(/strftime\('%Y-%m',\s*([a-zA-Z0-9_]+)\)/gi, "to_char($1, 'YYYY-MM')");
+      pgSql = pgSql.replace(/strftime\('%d\.%m',\s*([a-zA-Z0-9_]+)\)/gi, "to_char($1, 'DD.MM')");
+
+      // Handle INSERT without explicit ID: inject lastInsertRowid so IDs are 100% synchronized
+      const insertMatch = pgSql.match(/^INSERT\s+INTO\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+      if (insertMatch && lastInsertRowid) {
+        const tableName = insertMatch[1];
+        const cols = insertMatch[2].split(',').map(c => c.trim().toLowerCase());
+        if (!cols.includes('id') && tableName.toLowerCase() !== 'system_settings') {
+          pgSql = `INSERT INTO ${tableName} (id, ${insertMatch[2]}) VALUES (?, ${insertMatch[3]})`;
+          flatParams.unshift(lastInsertRowid);
+        }
+      }
+
+      // Convert '?' to '$1, $2, ...'
+      pgSql = convertSql(pgSql);
+
+      // Handle SQLite REPLACE into PostgreSQL
+      if (/^\s*INSERT\s+OR\s+REPLACE\s+INTO/i.test(pgSql)) {
+        pgSql = pgSql.replace(/^\s*INSERT\s+OR\s+REPLACE\s+INTO/i, 'INSERT INTO');
+        if (/system_settings/i.test(pgSql)) {
+          pgSql += ' ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP';
+        } else if (!/ON\s+CONFLICT/i.test(pgSql)) {
+          pgSql += ' ON CONFLICT (id) DO NOTHING';
+        }
+      } else if (/^\s*INSERT\s+OR\s+IGNORE\s+INTO/i.test(pgSql)) {
+        pgSql = pgSql.replace(/^\s*INSERT\s+OR\s+IGNORE\s+INTO/i, 'INSERT INTO');
+        if (!/ON\s+CONFLICT/i.test(pgSql)) {
+          pgSql += ' ON CONFLICT DO NOTHING';
+        }
+      }
+
+      await pool.query(pgSql, flatParams);
+    } catch (err) {
+      console.warn('[Supabase Replication Warn]:', err.message, 'Query:', sql.slice(0, 80));
+    }
+  })();
+
+  return trackWrite(writePromise);
+}
 
 /**
  * Sync all tables from Supabase into local SQLite database
@@ -81,6 +116,15 @@ async function syncFromSupabase(sqliteDb) {
       'payouts',
       'audit_logs'
     ];
+
+    // Clear local cache tables first to remove deleted rows
+    for (const table of [...tables].reverse()) {
+      try {
+        sqliteDb.prepare(`DELETE FROM ${table}`).run();
+      } catch (e) {
+        // Ignore table lock or foreign key warning during initial wipe
+      }
+    }
 
     for (const table of tables) {
       const res = await pool.query(`SELECT * FROM ${table}`);
@@ -149,5 +193,6 @@ module.exports = {
   pool,
   replicateToSupabase,
   syncFromSupabase,
-  getSupabaseHealth
+  getSupabaseHealth,
+  flushPendingWrites
 };

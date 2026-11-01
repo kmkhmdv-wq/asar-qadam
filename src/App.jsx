@@ -14,6 +14,7 @@ import { PayrollView } from './views/PayrollView';
 import { AiAccountantView } from './views/AiAccountantView';
 import { UsersAndRequestsView } from './views/UsersAndRequestsView';
 import { AuditLogView } from './views/AuditLogView';
+import { GeminiAssistantWidget } from './components/GeminiAssistantWidget';
 
 export const App = () => {
   const { user, loading } = useAuth();
@@ -111,6 +112,9 @@ export const App = () => {
           {currentView === 'profile' && <ProfileView />}
         </main>
       </div>
+
+      {/* Floating Google Gemini AI Assistant */}
+      <GeminiAssistantWidget currentView={currentView} />
     </div>
   );
 };

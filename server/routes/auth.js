@@ -1,27 +1,151 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const db = require('../db');
 const { generateToken, authMiddleware, logAuditAction } = require('../auth');
 
-// 1. Send SMS / Email Verification Code (Simulated with code '1234')
-router.post('/send-code', (req, res) => {
-  const { target, purpose } = req.body;
-  if (!target) {
+// In-memory OTP storage with TTL and attempt limits
+// Key: phone or email, Value: { codeHash, expiresAt, attempts, verified }
+const otpStore = new Map();
+
+// Rate limiting map: Key: IP or phone, Value: { count, resetAt }
+const rateLimitMap = new Map();
+
+function checkRateLimit(key, maxLimit = 5, windowMinutes = 10) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + windowMinutes * 60 * 1000 });
+    return true;
+  }
+  if (entry.count >= maxLimit) {
+    return false;
+  }
+  entry.count++;
+  return true;
+}
+
+// 1. Send SMS / Email Verification Code (6-digit OTP with cryptographic randomness)
+router.post(['/send-code', '/send-phone-otp'], async (req, res) => {
+  const target = req.body.target || req.body.phone || req.body.email;
+  const { purpose } = req.body;
+  if (!target || typeof target !== 'string' || !target.trim()) {
     return res.status(400).json({ error: 'Укажите номер телефона или email для отправки кода' });
   }
 
-  // Generate 4-digit code (simulated SMS / email delivery)
-  const code = '1234';
+  const cleanTarget = target.trim();
+  const clientIp = req.ip || req.connection.remoteAddress;
+
+  // Anti-spam rate limiting: max 3 attempts per target per 10 mins, max 10 per IP
+  if (!checkRateLimit(cleanTarget, 3, 10) || !checkRateLimit(clientIp, 10, 15)) {
+    return res.status(429).json({ 
+      error: 'Слишком много запросов кода. Пожалуйста, подождите 10 минут перед следующей попыткой.' 
+    });
+  }
+
+  const isEmail = cleanTarget.includes('@');
+
+  // Validate format
+  if (isEmail) {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(cleanTarget)) {
+      return res.status(400).json({ error: 'Укажите корректный существующий адрес электронной почты' });
+    }
+  } else {
+    // Phone validation (E.164 format with country code)
+    const cleanDigits = cleanTarget.replace(/\D/g, '');
+    if (cleanDigits.length < 10 || cleanDigits.length > 15) {
+      return res.status(400).json({ error: 'Укажите корректный номер телефона с кодом страны (например, +7 701 ...)' });
+    }
+  }
+
+  // Generate secure 6-digit OTP
+  const rawCode = crypto.randomInt(100000, 999999).toString();
+  const salt = bcrypt.genSaltSync(8);
+  const codeHash = bcrypt.hashSync(rawCode, salt);
+
+  otpStore.set(cleanTarget, {
+    codeHash,
+    rawCode, // preserved in memory for testing/sms gateway dispatch
+    expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes validity
+    attempts: 0,
+    verified: false
+  });
+
+  // Attempt real Supabase Auth Phone / Email OTP dispatch if available
+  let providerNote = '';
+  if (db.supabase) {
+    try {
+      if (isEmail) {
+        await db.supabase.auth.resend({ type: 'signup', email: cleanTarget });
+        providerNote = ' (отправлено через Supabase Email Auth)';
+      } else {
+        // Attempt Supabase Phone OTP if provider enabled in project
+        await db.supabase.auth.signInWithOtp({ phone: cleanTarget });
+        providerNote = ' (отправлено через Supabase Phone OTP)';
+      }
+    } catch (e) {
+      // Non-fatal if custom SMS provider or SMTP is used
+      console.log(`[OTP Dispatch Info] OTP generated for ${cleanTarget}: ${rawCode}. Provider info: ${e.message}`);
+    }
+  }
+
+  console.log(`[SMS OTP Dispatch]: Код подтверждения для ${cleanTarget}: [${rawCode}] (Действителен 5 минут)`);
 
   res.json({
     success: true,
-    code, // returned so the UI / tester can easily see and enter it
-    message: `Код подтверждения отправлен на ${target}: 1234`
+    message: isEmail 
+      ? `Письмо с подтверждением отправлено на почту ${cleanTarget}${providerNote}`
+      : `SMS с 6-значным кодом подтверждения отправлено на номер ${cleanTarget}${providerNote}`,
+    // Return code in dev environment to allow verification testing
+    code: process.env.NODE_ENV !== 'production' ? rawCode : undefined
   });
 });
 
-// 2. Register user (status='pending')
+// 2. Verify Phone / Email OTP Code
+router.post('/verify-code', (req, res) => {
+  const { target, code } = req.body;
+  if (!target || !code) {
+    return res.status(400).json({ error: 'Укажите контакт и введите код подтверждения' });
+  }
+
+  const cleanTarget = target.trim();
+  const cleanCode = code.toString().trim();
+  const entry = otpStore.get(cleanTarget);
+
+  if (!entry) {
+    return res.status(400).json({ error: 'Код подтверждения не запрашивался или срок его действия истёк. Запросите код заново.' });
+  }
+
+  if (Date.now() > entry.expiresAt) {
+    otpStore.delete(cleanTarget);
+    return res.status(400).json({ error: 'Срок действия кода подтверждения (5 минут) истёк. Запросите новый код.' });
+  }
+
+  if (entry.attempts >= 5) {
+    otpStore.delete(cleanTarget);
+    return res.status(400).json({ error: 'Превышено максимальное количество попыток (5). В целях безопасности запросите новый код.' });
+  }
+
+  entry.attempts++;
+
+  const isValid = bcrypt.compareSync(cleanCode, entry.codeHash) || cleanCode === entry.rawCode;
+  if (!isValid) {
+    return res.status(400).json({ 
+      error: `Неверный код подтверждения. Осталось попыток: ${5 - entry.attempts}` 
+    });
+  }
+
+  entry.verified = true;
+  res.json({
+    success: true,
+    verified: true,
+    message: 'Контакт успешно подтверждён!'
+  });
+});
+
+// 3. Register user with real email check, SMS OTP verification, and role selection
 router.post('/register', async (req, res) => {
   const {
     first_name,
@@ -34,40 +158,61 @@ router.post('/register', async (req, res) => {
     email,
     phone,
     password,
+    role,
+    roleRequest,
     verification_code,
-    verificationCode,
-    roleRequest
+    verificationCode
   } = req.body;
 
   const fName = (first_name || firstName || '').trim();
   const lName = (last_name || lastName || '').trim();
   const mName = (middle_name || middleName || '').trim();
   const fullName = name ? name.trim() : `${fName} ${lName}`.trim();
-  const vCode = verification_code || verificationCode;
+  const cleanEmail = email ? email.trim().toLowerCase() : null;
+  const cleanPhone = phone ? phone.trim() : null;
+  const chosenRole = ['owner', 'director', 'admin', 'specialist'].includes(role || roleRequest)
+    ? (role || roleRequest)
+    : 'specialist';
 
-  if (!fullName || (!email && !phone) || !password) {
+  if (!fullName || !cleanEmail || !cleanPhone || !password) {
     return res.status(400).json({ 
-      error: 'Пожалуйста, заполните имя, фамилию, контакт (email или телефон) и пароль' 
+      error: 'Заполните все обязательные поля: ФИО, реальный email, номер телефона и пароль' 
     });
   }
 
-  // Verification code check (simulated '1234' or any 4-digit code)
-  if (vCode && vCode !== '1234') {
-    return res.status(400).json({ error: 'Неверный код подтверждения (для теста используйте 1234)' });
+  // 1. Strict RFC Email Format Validation
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Укажите корректный существующий адрес электронной почты' });
   }
 
-  // Check existing in local cache
-  const existingLocal = db.prepare('SELECT id FROM users WHERE (email IS NOT NULL AND email = ?) OR (phone IS NOT NULL AND phone = ?)').get(email || '__none__', phone || '__none__');
+  // 2. Phone SMS Verification check
+  const otpEntry = otpStore.get(cleanPhone);
+  const inputCode = (verification_code || verificationCode || '').toString().trim();
+  const isPhoneVerified = otpEntry && (otpEntry.verified || (inputCode && (bcrypt.compareSync(inputCode, otpEntry.codeHash) || inputCode === otpEntry.rawCode)));
+
+  if (!isPhoneVerified) {
+    return res.status(400).json({ 
+      error: 'Номер телефона должен быть подтверждён одноразовым SMS-кодом перед завершением регистрации' 
+    });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Пароль должен содержать минимум 6 символов' });
+  }
+
+  // 3. Check existing in local cache
+  const existingLocal = db.prepare('SELECT id FROM users WHERE (email IS NOT NULL AND email = ?) OR (phone IS NOT NULL AND phone = ?)').get(cleanEmail, cleanPhone);
   if (existingLocal) {
     return res.status(400).json({ error: 'Пользователь с таким email или телефоном уже зарегистрирован в системе' });
   }
 
-  // Check existing in Supabase
+  // 4. Check existing in Supabase
   try {
     const { data: existingSupabase } = await db.supabase
       .from('users')
       .select('id')
-      .or(`email.eq.${email || '__none__'},phone.eq.${phone || '__none__'}`)
+      .or(`email.eq.${cleanEmail},phone.eq.${cleanPhone}`)
       .maybeSingle();
 
     if (existingSupabase) {
@@ -80,9 +225,37 @@ router.post('/register', async (req, res) => {
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(password, salt);
 
+  // 5. Trigger official Supabase Auth Email Confirmation
+  let suAuthUser = null;
+  if (db.supabase) {
+    try {
+      const { data: suAuthData, error: suAuthError } = await db.supabase.auth.signUp({
+        email: cleanEmail,
+        password: password,
+        options: {
+          data: {
+            full_name: fullName,
+            first_name: fName,
+            last_name: lName,
+            phone: cleanPhone,
+            role: chosenRole
+          }
+        }
+      });
+      if (suAuthError) {
+        console.warn('[Supabase Auth signUp note]:', suAuthError.message);
+      } else if (suAuthData?.user) {
+        suAuthUser = suAuthData.user;
+        console.log('[Supabase Auth] Official confirmation email dispatched to:', cleanEmail);
+      }
+    } catch (authErr) {
+      console.warn('[Supabase Auth exception]:', authErr.message);
+    }
+  }
+
   let createdUser = null;
 
-  // 1. Insert directly into Supabase (Permanent cloud storage for registrations)
+  // 6. Insert into Supabase 'users' table
   try {
     const { data: suData, error: suError } = await db.supabase
       .from('users')
@@ -91,13 +264,13 @@ router.post('/register', async (req, res) => {
         first_name: fName || fullName,
         last_name: lName,
         middle_name: mName || null,
-        email: email || null,
-        phone: phone || null,
+        email: cleanEmail,
+        phone: cleanPhone,
         password_hash: passwordHash,
-        role: 'specialist',
+        role: chosenRole,
         status: 'pending',
         phone_confirmed: 1,
-        email_confirmed: 1,
+        email_confirmed: suAuthUser?.email_confirmed_at ? 1 : 0,
         branch: 'Астана — Центр'
       })
       .select()
@@ -105,151 +278,171 @@ router.post('/register', async (req, res) => {
 
     if (!suError && suData) {
       createdUser = suData;
-      console.log(`[Supabase] Registration application stored successfully. User ID: ${createdUser.id}`);
-    } else if (suError) {
-      console.warn('[Supabase Registration Insert Warn]:', suError.message);
+      console.log(`[Supabase Users] Registration saved. User ID: ${createdUser.id}, Role: ${chosenRole}`);
     }
   } catch (err) {
     console.warn('[Supabase Registration Error]:', err.message);
   }
 
-  // 2. Also mirror into local database
-  let localId = createdUser ? createdUser.id : null;
-  try {
-    if (createdUser) {
-      db.prepare(`
-        INSERT OR REPLACE INTO users (
-          id, name, first_name, last_name, middle_name, email, phone, 
-          password_hash, role, status, phone_confirmed, email_confirmed, branch
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'specialist', 'pending', 1, 1, 'Астана — Центр')
-      `).run(
-        createdUser.id,
-        fullName,
-        fName || fullName,
-        lName,
-        mName || null,
-        email || null,
-        phone || null,
-        passwordHash
-      );
-    } else {
-      const result = db.prepare(`
-        INSERT INTO users (
-          name, first_name, last_name, middle_name, email, phone, 
-          password_hash, role, status, phone_confirmed, email_confirmed
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'specialist', 'pending', 1, 1)
-      `).run(
-        fullName,
-        fName || fullName,
-        lName,
-        mName || null,
-        email || null,
-        phone || null,
-        passwordHash
-      );
-      localId = result.lastInsertRowid;
-    }
-  } catch (e) {
-    console.warn('Local insert warning:', e.message);
+  // 7. Mirror into local DB
+  let finalId = createdUser ? createdUser.id : null;
+  if (createdUser) {
+    db.prepare(`
+      INSERT OR REPLACE INTO users (
+        id, name, first_name, last_name, middle_name, email, phone, 
+        password_hash, role, status, phone_confirmed, email_confirmed, branch
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, 0, 'Астана — Центр')
+    `).run(
+      createdUser.id,
+      fullName,
+      fName || fullName,
+      lName,
+      mName || null,
+      cleanEmail,
+      cleanPhone,
+      passwordHash,
+      chosenRole
+    );
+  } else {
+    const result = db.prepare(`
+      INSERT INTO users (
+        name, first_name, last_name, middle_name, email, phone, 
+        password_hash, role, status, phone_confirmed, email_confirmed, branch
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, 0, 'Астана — Центр')
+    `).run(
+      fullName,
+      fName || fullName,
+      lName,
+      mName || null,
+      cleanEmail,
+      cleanPhone,
+      passwordHash,
+      chosenRole
+    );
+    finalId = result.lastInsertRowid;
   }
 
-  const finalId = createdUser ? createdUser.id : localId;
+  // 8. Auto-create specialist card if requested role is specialist
+  if (chosenRole === 'specialist') {
+    try {
+      const branchName = 'Астана — Центр';
+      const specDirections = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
+      let specId = null;
 
-  // Automatically create linked specialist card so they appear among center specialists for owner, director, admin
-  try {
-    const branchName = 'Астана — Центр';
-    const specDirections = JSON.stringify(['Логопед', 'АВА-терапевт', 'АФК-тренер']);
-    let specId = null;
+      if (db.supabase) {
+        const { data: suSpec } = await db.supabase
+          .from('specialists')
+          .insert({
+            user_id: finalId,
+            full_name: fullName,
+            first_name: fName,
+            last_name: lName,
+            middle_name: mName,
+            phone: cleanPhone,
+            email: cleanEmail,
+            specialty: 'Специалист центра',
+            position: 'Специалист',
+            branch: branchName,
+            directions: specDirections,
+            default_percentage: 50.0,
+            base_rate: 8000.0,
+            work_days: '["mon","tue","wed","thu","fri","sat"]',
+            work_hours_start: '09:00',
+            work_hours_end: '18:00',
+            is_active: 1,
+            color_badge: '#F47920'
+          })
+          .select()
+          .single();
+        if (suSpec) specId = suSpec.id;
+      }
 
-    if (db.supabase) {
-      const { data: suSpec } = await db.supabase
-        .from('specialists')
-        .insert({
-          user_id: finalId,
-          full_name: fullName,
-          first_name: fName,
-          last_name: lName,
-          middle_name: mName,
-          phone: phone || '',
-          email: email || null,
-          specialty: 'Специалист центра',
-          position: 'Специалист',
-          branch: branchName,
-          directions: specDirections,
-          default_percentage: 50.0,
-          base_rate: 8000.0,
-          work_days: '["mon","tue","wed","thu","fri","sat"]',
-          work_hours_start: '09:00',
-          work_hours_end: '18:00',
-          is_active: 1,
-          color_badge: '#F47920'
-        })
-        .select()
-        .single();
-      if (suSpec) specId = suSpec.id;
+      if (specId) {
+        db.prepare(`
+          INSERT OR REPLACE INTO specialists (
+            id, user_id, full_name, first_name, last_name, middle_name, phone, email,
+            specialty, position, branch, directions, default_percentage, base_rate,
+            work_days, work_hours_start, work_hours_end, is_active, color_badge
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+        `).run(specId, finalId, fullName, fName, lName, mName, cleanPhone, cleanEmail, branchName, specDirections);
+      } else {
+        const spRes = db.prepare(`
+          INSERT INTO specialists (
+            user_id, full_name, first_name, last_name, middle_name, phone, email,
+            specialty, position, branch, directions, default_percentage, base_rate,
+            work_days, work_hours_start, work_hours_end, is_active, color_badge
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', 'Астана — Центр', ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+        `).run(finalId, fullName, fName, lName, mName, cleanPhone, cleanEmail, specDirections);
+        specId = spRes.lastInsertRowid;
+      }
+
+      db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(specId, finalId);
+    } catch (e) {
+      console.warn('Specialist auto-create on registration note:', e.message);
     }
-
-    if (specId) {
-      db.prepare(`
-        INSERT OR REPLACE INTO specialists (
-          id, user_id, full_name, first_name, last_name, middle_name, phone, email,
-          specialty, position, branch, directions, default_percentage, base_rate,
-          work_days, work_hours_start, work_hours_end, is_active, color_badge
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Специалист', ?, ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
-      `).run(specId, finalId, fullName, fName, lName, mName, phone || '', email || null, 'Специалист центра', branchName, specDirections);
-    } else {
-      const spRes = db.prepare(`
-        INSERT INTO specialists (
-          user_id, full_name, first_name, last_name, middle_name, phone, email,
-          specialty, position, branch, directions, default_percentage, base_rate,
-          work_days, work_hours_start, work_hours_end, is_active, color_badge
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', 'Астана — Центр', ?, 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
-      `).run(finalId, fullName, fName, lName, mName, phone || '', email || null, specDirections);
-      specId = spRes.lastInsertRowid;
-    }
-
-    db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(specId, finalId);
-    if (db.supabase) {
-      db.supabase.from('users').update({ specialist_id: specId }).eq('id', finalId).catch(() => {});
-    }
-    console.log(`[Specialist auto-created]: id=${specId} for user ${fullName}`);
-  } catch (specErr) {
-    console.warn('Specialist auto-create on registration warning:', specErr.message);
   }
 
+  // Clear OTP
+  otpStore.delete(cleanPhone);
+
+  // Send Telegram notification
+  const { notifyNewRegistration } = require('../services/telegramService');
+  notifyNewRegistration({
+    name: fullName,
+    phone: cleanPhone,
+    email: cleanEmail,
+    branch: 'Астана — Центр'
+  }).catch(() => {});
 
   logAuditAction({
     userId: finalId,
     userName: fullName,
-    userRole: 'guest',
+    userRole: chosenRole,
     action: 'REGISTRATION_SUBMITTED',
     entityType: 'users',
     entityId: finalId,
-    details: `Подана заявка на регистрацию в Supabase: ${fullName} (${email || phone}). Статус: Ожидает одобрения.`,
+    details: `Заявка на регистрацию: ${fullName} (${cleanEmail}, ${cleanPhone}), запрошенная роль: ${chosenRole}. Письмо с подтверждением отправлено.`,
     ipAddress: req.ip
   });
 
-  // Send instant Telegram notification to the group
-  const { notifyNewRegistration } = require('../services/telegramService');
-  notifyNewRegistration({
-    name: fullName,
-    phone,
-    email,
-    branch: 'Астана — Центр'
-  }).catch(err => console.warn('[Telegram Notify Error]:', err.message));
-
   res.json({
     success: true,
-    message: 'Заявка на регистрацию успешно сохранена в Supabase! Оповещение отправлено в Telegram. Доступ к CRM откроется сразу после подтверждения руководителем или владельцем центра.'
+    message: `Заявка успешно зарегистрирована в Supabase! Номер ${cleanPhone} подтверждён. На вашу электронную почту ${cleanEmail} отправлено письмо для подтверждения реального почтового ящика. Доступ к CRM активируется сразу после подтверждения почты и одобрения руководством центра.`
   });
 });
 
+// 4. Resend Confirmation Email
+router.post('/resend-confirmation', async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ error: 'Укажите корректный адрес электронной почты' });
+  }
 
-// 3. Login
+  const cleanEmail = email.trim().toLowerCase();
+  if (!checkRateLimit(cleanEmail, 3, 10)) {
+    return res.status(429).json({ error: 'Слишком много запросов. Подождите 10 минут перед повторной отправкой письма.' });
+  }
+
+  if (db.supabase) {
+    try {
+      await db.supabase.auth.resend({ type: 'signup', email: cleanEmail });
+    } catch (e) {
+      console.warn('[Supabase resend confirmation warn]:', e.message);
+    }
+  }
+
+  res.json({
+    success: true,
+    message: `Письмо с подтверждением повторно отправлено на ${cleanEmail}. Проверьте папку «Входящие» и «Спам».`
+  });
+});
+
+// 5. Login with real email verification and status check
 router.post('/login', async (req, res) => {
-  const { login, password } = req.body;
+  const login = req.body.login || req.body.identifier;
+  const password = req.body.password;
   if (!login || !password) {
     return res.status(400).json({ error: 'Введите логин (email или телефон) и пароль' });
   }
@@ -258,7 +451,7 @@ router.post('/login', async (req, res) => {
   let user = db.prepare('SELECT * FROM users WHERE email = ? OR phone = ?').get(cleanLogin, cleanLogin);
 
   // If not found in local cache or status is pending, verify directly with Supabase
-  if (!user || user.status === 'pending') {
+  if (!user || user.status === 'pending' || !user.email_confirmed) {
     try {
       const { data: suUser } = await db.supabase
         .from('users')
@@ -268,18 +461,18 @@ router.post('/login', async (req, res) => {
 
       if (suUser) {
         user = suUser;
-        // Mirror to local SQLite
         try {
           db.prepare(`
             INSERT OR REPLACE INTO users (
               id, name, first_name, last_name, middle_name, email, phone, 
-              password_hash, role, status, specialist_id, branch, avatar_url, bio, created_at
+              password_hash, role, status, specialist_id, branch, phone_confirmed, email_confirmed, avatar_url, bio, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             user.id, user.name, user.first_name, user.last_name, user.middle_name,
             user.email, user.phone, user.password_hash, user.role, user.status,
-            user.specialist_id, user.branch, user.avatar_url, user.bio, user.created_at
+            user.specialist_id, user.branch, user.phone_confirmed || 1, user.email_confirmed || 0,
+            user.avatar_url, user.bio, user.created_at
           );
         } catch (e) {}
       }
@@ -297,9 +490,34 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
 
+  // Verification check: email must be confirmed for non-owner accounts
+  if (user.role !== 'owner' && user.email && user.email_confirmed === 0) {
+    // Check if Supabase Auth user was confirmed
+    let isConfirmedInSupabase = false;
+    if (db.supabase) {
+      try {
+        const { data: suAuth } = await db.supabase.auth.admin.listUsers();
+        const found = suAuth?.users?.find(u => u.email === user.email);
+        if (found && found.email_confirmed_at) {
+          isConfirmedInSupabase = true;
+          db.prepare('UPDATE users SET email_confirmed = 1 WHERE id = ?').run(user.id);
+          user.email_confirmed = 1;
+        }
+      } catch (e) {}
+    }
+
+    if (!isConfirmedInSupabase && user.email_confirmed === 0) {
+      return res.status(403).json({
+        error: `Доступ запрещён: адрес электронной почты ${user.email} ещё не подтверждён. Пожалуйста, откройте письмо с подтверждением в вашем почтовом ящике.`,
+        needsEmailConfirmation: true,
+        email: user.email
+      });
+    }
+  }
+
   if (user.status === 'pending') {
     return res.status(403).json({
-      error: 'Ваш аккаунт ожидает подтверждения руководителем центра. Пожалуйста, обратитесь к руководству для активации.'
+      error: 'Ваш аккаунт ожидает подтверждения руководством центра Asar Qadam. Обратитесь к администратору или директору для активации.'
     });
   }
 
@@ -341,19 +559,27 @@ router.post('/login', async (req, res) => {
   });
 });
 
-
-// 4. Password Recovery
+// 6. Reset Password via SMS/Email OTP
 router.post('/reset-password', (req, res) => {
   const { login, code, new_password } = req.body;
-  if (!login || !new_password) {
-    return res.status(400).json({ error: 'Укажите контакт и новый пароль' });
+  if (!login || !code || !new_password) {
+    return res.status(400).json({ error: 'Заполните логин, код подтверждения и новый пароль' });
   }
 
-  if (code && code !== '1234') {
-    return res.status(400).json({ error: 'Неверный код подтверждения (для теста используйте 1234)' });
+  const cleanLogin = login.trim();
+  const cleanCode = code.toString().trim();
+  const entry = otpStore.get(cleanLogin);
+
+  if (!entry) {
+    return res.status(400).json({ error: 'Код подтверждения не запрашивался или срок его действия истёк' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ? OR phone = ?').get(login.trim(), login.trim());
+  const isValid = bcrypt.compareSync(cleanCode, entry.codeHash) || cleanCode === entry.rawCode;
+  if (!isValid) {
+    return res.status(400).json({ error: 'Неверный код подтверждения' });
+  }
+
+  const user = db.prepare('SELECT id, name, role FROM users WHERE email = ? OR phone = ?').get(cleanLogin, cleanLogin);
   if (!user) {
     return res.status(404).json({ error: 'Пользователь с таким контактом не найден' });
   }
@@ -361,7 +587,12 @@ router.post('/reset-password', (req, res) => {
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(new_password, salt);
 
-  db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, user.id);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
+  if (db.supabase) {
+    db.supabase.from('users').update({ password_hash: passwordHash }).eq('id', user.id).catch(() => {});
+  }
+
+  otpStore.delete(cleanLogin);
 
   logAuditAction({
     userId: user.id,
@@ -370,193 +601,24 @@ router.post('/reset-password', (req, res) => {
     action: 'PASSWORD_RESET',
     entityType: 'users',
     entityId: user.id,
-    details: 'Восстановление пароля по коду подтверждения',
+    details: 'Сброс и обновление пароля через OTP подтверждение',
     ipAddress: req.ip
   });
 
-  res.json({ success: true, message: 'Пароль успешно изменён. Теперь вы можете войти в систему.' });
+  res.json({
+    success: true,
+    message: 'Пароль успешно обновлён! Теперь вы можете войти в систему с новым паролем.'
+  });
 });
 
-// 5. Current user info
+// 7. Get current user profile
 router.get('/me', authMiddleware, (req, res) => {
-  res.json({ user: req.user });
-});
-
-// 6. User Profile Management (Available to ALL roles: Owner, Director, Admin, Specialist)
-router.get('/profile', authMiddleware, (req, res) => {
-  const user = req.user;
-  let specialistData = null;
-
-  if (user.specialist_id) {
-    specialistData = db.prepare('SELECT * FROM specialists WHERE id = ?').get(user.specialist_id);
-    if (specialistData) {
-      try {
-        specialistData.workDays = JSON.parse(specialistData.work_days || '[]');
-        specialistData.directionsList = JSON.parse(specialistData.directions || '[]');
-      } catch (e) {
-        specialistData.workDays = [];
-        specialistData.directionsList = [];
-      }
-    }
-  }
-
-  res.json({ user, specialist: specialistData });
-});
-
-router.put('/profile', authMiddleware, (req, res) => {
-  const userId = req.user.id;
-  const {
-    first_name,
-    last_name,
-    middle_name,
-    phone,
-    email,
-    avatar_url,
-    bio,
-    current_password,
-    new_password,
-    verification_code
-  } = req.body;
-
-  const userInDb = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!userInDb) {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) {
     return res.status(404).json({ error: 'Пользователь не найден' });
   }
 
-  // Check unique email/phone if changed
-  if (email && email !== userInDb.email) {
-    const existing = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, userId);
-    if (existing) {
-      return res.status(400).json({ error: 'Этот email уже используется другим сотрудником' });
-    }
-    if (verification_code && verification_code !== '1234') {
-      return res.status(400).json({ error: 'Неверный код подтверждения смены email (код: 1234)' });
-    }
-  }
-
-  if (phone && phone !== userInDb.phone) {
-    const existing = db.prepare('SELECT id FROM users WHERE phone = ? AND id != ?').get(phone, userId);
-    if (existing) {
-      return res.status(400).json({ error: 'Этот номер телефона уже используется другим сотрудником' });
-    }
-    if (verification_code && verification_code !== '1234') {
-      return res.status(400).json({ error: 'Неверный код подтверждения смены телефона (код: 1234)' });
-    }
-  }
-
-  // Password change validation
-  let newPasswordHash = userInDb.password_hash;
-  if (new_password) {
-    if (!current_password) {
-      return res.status(400).json({ error: 'Для смены пароля необходимо ввести текущий пароль' });
-    }
-    const isCurrentValid = bcrypt.compareSync(current_password, userInDb.password_hash);
-    if (!isCurrentValid) {
-      return res.status(400).json({ error: 'Текущий пароль указан неверно' });
-    }
-    const salt = bcrypt.genSaltSync(10);
-    newPasswordHash = bcrypt.hashSync(new_password, salt);
-  }
-
-  const fName = first_name !== undefined ? (first_name || '').trim() : (userInDb.first_name || '');
-  const lName = last_name !== undefined ? (last_name || '').trim() : (userInDb.last_name || '');
-  const mName = middle_name !== undefined ? (middle_name || '').trim() : userInDb.middle_name;
-  const fullName = `${fName} ${lName}`.trim() || userInDb.name;
-
-  db.prepare(`
-    UPDATE users SET
-      name = ?,
-      first_name = ?,
-      last_name = ?,
-      middle_name = ?,
-      phone = COALESCE(?, phone),
-      email = COALESCE(?, email),
-      avatar_url = COALESCE(?, avatar_url),
-      bio = COALESCE(?, bio),
-      password_hash = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(
-    fullName,
-    fName,
-    lName,
-    mName || null,
-    phone || null,
-    email || null,
-    avatar_url || null,
-    bio || null,
-    newPasswordHash,
-    userId
-  );
-
-  // If user is linked to a specialist, synchronize specialist details so schedules & rosters stay consistent!
-  if (userInDb.specialist_id) {
-    db.prepare(`
-      UPDATE specialists SET
-        full_name = ?,
-        first_name = ?,
-        last_name = ?,
-        middle_name = ?,
-        phone = COALESCE(?, phone),
-        email = COALESCE(?, email),
-        avatar_url = COALESCE(?, avatar_url)
-      WHERE id = ?
-    `).run(
-      fullName,
-      fName,
-      lName,
-      mName || null,
-      phone || null,
-      email || null,
-      avatar_url || null,
-      userInDb.specialist_id
-    );
-  }
-
-  const updatedUser = db.prepare(`
-    SELECT id, name, first_name, last_name, middle_name, email, phone, role, status, 
-           specialist_id, branch, avatar_url, bio, created_at
-    FROM users 
-    WHERE id = ?
-  `).get(userId);
-
-  const newToken = generateToken(updatedUser);
-
-  logAuditAction({
-    userId,
-    userName: fullName,
-    userRole: updatedUser.role,
-    action: 'PROFILE_UPDATED',
-    entityType: 'users',
-    entityId: userId,
-    details: `Пользователь обновил личные данные профиля (ФИО: ${fullName})`,
-    ipAddress: req.ip
-  });
-
   res.json({
-    success: true,
-    message: 'Личные данные профиля успешно сохранены',
-    token: newToken,
-    user: updatedUser
-  });
-});
-
-// 7. Quick Role Switcher for paired testing of all 4 roles
-router.post('/switch-role', (req, res) => {
-  const { role } = req.body;
-  if (!['owner', 'director', 'admin', 'specialist'].includes(role)) {
-    return res.status(400).json({ error: 'Недопустимая роль' });
-  }
-
-  const user = db.prepare("SELECT * FROM users WHERE role = ? AND status = 'active' LIMIT 1").get(role);
-  if (!user) {
-    return res.status(404).json({ error: `Тестовый пользователь с ролью ${role} не найден` });
-  }
-
-  const token = generateToken(user);
-  res.json({
-    success: true,
-    token,
     user: {
       id: user.id,
       name: user.name,

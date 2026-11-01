@@ -504,29 +504,36 @@ router.post('/:id/activate', requireRoles('owner', 'director'), (req, res) => {
   res.json({ success: true, message: `Специалист «${current.full_name}» снова активен` });
 });
 
-// 7. Hard Delete (Owner only) with validation of future bookings
-router.delete('/:id', requireRoles('owner'), (req, res) => {
+// 7. Delete Specialist Immediately (Owner and Director)
+router.delete('/:id', requireRoles('owner', 'director'), async (req, res) => {
   const specialistId = req.params.id;
   const current = db.prepare('SELECT full_name FROM specialists WHERE id = ?').get(specialistId);
   if (!current) {
     return res.status(404).json({ error: 'Специалист не найден' });
   }
 
-  const futureSessionsCount = db.prepare(`
-    SELECT COUNT(id) as count 
-    FROM schedule_sessions 
-    WHERE specialist_id = ? AND date >= date('now') AND status = 'scheduled'
-  `).get(specialistId).count;
-
-  if (futureSessionsCount > 0) {
-    return res.status(400).json({ 
-      error: `Невозможно полностью удалить специалиста: у него запланировано ${futureSessionsCount} будущих занятий. Сначала деактивируйте сотрудника или перенесите занятия.` 
-    });
-  }
-
-  // Safe delete (foreign keys set null on financial transactions)
+  // Preserve financial history by nullifying specialist_id in transactions and attendance
+  db.prepare('UPDATE children SET assigned_specialist_id = NULL WHERE assigned_specialist_id = ?').run(specialistId);
+  db.prepare('UPDATE financial_transactions SET specialist_id = NULL WHERE specialist_id = ?').run(specialistId);
+  db.prepare('UPDATE attendance SET specialist_id = NULL WHERE specialist_id = ?').run(specialistId);
+  db.prepare('UPDATE payouts SET specialist_id = NULL WHERE specialist_id = ?').run(specialistId);
+  db.prepare('UPDATE users SET specialist_id = NULL WHERE specialist_id = ?').run(specialistId);
   db.prepare('DELETE FROM schedule_sessions WHERE specialist_id = ?').run(specialistId);
   db.prepare('DELETE FROM specialists WHERE id = ?').run(specialistId);
+
+  // Direct Supabase double-check
+  if (db.supabase) {
+    try {
+      await db.supabase.from('children').update({ assigned_specialist_id: null }).eq('assigned_specialist_id', specialistId);
+      await db.supabase.from('financial_transactions').update({ specialist_id: null }).eq('specialist_id', specialistId);
+      await db.supabase.from('attendance').update({ specialist_id: null }).eq('specialist_id', specialistId);
+      await db.supabase.from('users').update({ specialist_id: null }).eq('specialist_id', specialistId);
+      await db.supabase.from('schedule_sessions').delete().eq('specialist_id', specialistId);
+      await db.supabase.from('specialists').delete().eq('id', specialistId);
+    } catch (e) {
+      console.warn('[Supabase Direct Delete Warning]:', e.message);
+    }
+  }
 
   logAuditAction({
     userId: req.user.id,
@@ -535,11 +542,11 @@ router.delete('/:id', requireRoles('owner'), (req, res) => {
     action: 'SPECIALIST_DELETED',
     entityType: 'specialists',
     entityId: specialistId,
-    details: `Владелец полностью удалил специалиста ${current.full_name}`,
+    details: `Удален специалист: ${current.full_name}`,
     ipAddress: req.ip
   });
 
-  res.json({ success: true, message: `Специалист «${current.full_name}» полностью удалён` });
+  res.json({ success: true, message: `Специалист «${current.full_name}» удалён` });
 });
 
 module.exports = router;

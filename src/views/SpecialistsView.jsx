@@ -217,23 +217,26 @@ export const SpecialistsView = () => {
     }
   };
 
-  // Hard Delete (Owner only)
-  const handleHardDelete = async (sp) => {
-    if (!confirm(`Вы действительно хотите НАВСЕГДА удалить специалиста ${sp.full_name}? Это действие нельзя отменить.`)) {
-      return;
-    }
+  // Instant Specialist Deletion (1-click without confirmation modal as required)
+  const handleDeleteSpecialist = async (sp) => {
+    const spId = sp.id;
+    const spName = sp.full_name;
+
+    // Optimistically remove immediately from view
+    setSpecialists(prev => prev.filter(s => s.id !== spId));
+    showToast(`Специалист «${spName}» удалён`);
+
     try {
-      const res = await fetch(`/api/specialists/${sp.id}`, {
+      const res = await fetch(`/api/specialists/${spId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${localStorage.getItem('asar_token')}` }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Ошибка удаления');
-
-      showToast(data.message);
       fetchData();
     } catch (err) {
-      alert(err.message);
+      showToast('Ошибка при удалении: ' + err.message);
+      fetchData();
     }
   };
 
@@ -467,6 +470,32 @@ export const SpecialistsView = () => {
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
               Загрузка специалистов...
             </div>
+          ) : activeSpecialists.length === 0 ? (
+            <div style={{
+              padding: '48px 24px',
+              textAlign: 'center',
+              background: 'var(--surface-primary)',
+              border: '1px dashed var(--border-medium)',
+              borderRadius: '12px',
+              margin: '16px 0'
+            }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-bright)', marginBottom: '8px' }}>
+                Список специалистов пуст
+              </h3>
+              <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '18px', maxWidth: '480px', margin: '0 auto 18px auto' }}>
+                В штате центра пока нет специалистов. Нажмите «Добавить специалиста», чтобы внести первого сотрудника в систему.
+              </p>
+              {canManageUsers && (
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="btn-primary-cta"
+                  style={{ padding: '10px 20px', fontSize: '14px', margin: '0 auto' }}
+                >
+                  Добавить специалиста
+                </button>
+              )}
+            </div>
           ) : (
             <div style={{
               display: 'grid',
@@ -654,11 +683,19 @@ export const SpecialistsView = () => {
                         Редактировать
                       </button>
                       <button
-                        onClick={() => handleOpenDeactivate(sp)}
+                        type="button"
+                        onClick={() => handleDeleteSpecialist(sp)}
                         className="btn-secondary"
-                        style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--color-raspberry)', borderColor: 'rgba(200, 63, 120, 0.3)' }}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '12px',
+                          color: '#F47920',
+                          borderColor: 'rgba(244, 121, 32, 0.4)',
+                          cursor: 'pointer'
+                        }}
+                        title="Удалить специалиста в 1 клик"
                       >
-                        Деактивировать
+                        Удалить
                       </button>
                     </div>
                   )}
@@ -830,14 +867,15 @@ export const SpecialistsView = () => {
                     >
                       Восстановить в активные
                     </button>
-                    {user?.role === 'owner' && (
+                    {(user?.role === 'owner' || user?.role === 'director') && (
                       <button
                         type="button"
-                        onClick={() => handleHardDelete(sp)}
+                        onClick={() => handleDeleteSpecialist(sp)}
                         className="btn-secondary"
-                        style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--color-raspberry)' }}
+                        style={{ padding: '6px 12px', fontSize: '12px', color: '#F47920', borderColor: 'rgba(244, 121, 32, 0.4)' }}
+                        title="Удалить специалиста в 1 клик"
                       >
-                        Удалить навсегда
+                        Удалить
                       </button>
                     )}
                   </div>

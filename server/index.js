@@ -9,6 +9,24 @@ const PORT = process.env.PORT || 5001;
 app.use(cors());
 app.use(express.json());
 
+const db = require('./db');
+
+// Ensure all database writes are committed to Supabase before sending JSON response
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = async function(data) {
+    try {
+      if (db.flushWrites) {
+        await db.flushWrites();
+      }
+    } catch (e) {
+      console.warn('[Flush writes warning]:', e.message);
+    }
+    return originalJson(data);
+  };
+  next();
+});
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
@@ -22,8 +40,6 @@ app.use('/api/ai', require('./routes/ai'));
 app.use('/api/audit', require('./routes/audit'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/directions', require('./routes/directions'));
-
-const db = require('./db');
 
 app.get('/api/health', (req, res) => {
   res.json({

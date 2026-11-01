@@ -297,32 +297,47 @@ export const AccountingView = () => {
               </tr>
             </thead>
             <tbody>
-              {summary?.specialists?.map(s => (
-                <tr key={s.id}>
-                  <td>
-                    <strong style={{ color: 'var(--text-dark)' }}>{s.full_name}</strong>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{s.specialty}</td>
-                  <td style={{ fontFamily: 'monospace', fontWeight: '700' }}>{s.completed_sessions_count}</td>
-                  <td style={{ fontWeight: '700', color: 'var(--text-dark)' }}>
-                    {s.total_gross_generated.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ color: 'var(--color-teal)', fontWeight: '700' }}>
-                    {(s.total_gross_generated - s.accrued_salary).toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ fontWeight: '700', color: 'var(--color-blue-dark)' }}>
-                    {s.accrued_salary.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td>
-                    <span style={{
-                      fontWeight: '800',
-                      color: s.balance_due > 0 ? 'var(--color-gold-dark)' : 'var(--text-secondary)'
-                    }}>
-                      {Math.max(0, s.balance_due).toLocaleString('ru-RU')} ₸
-                    </span>
+              {(!summary?.specialists || summary.specialists.length === 0) ? (
+                <tr>
+                  <td colSpan="7" style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text-secondary)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-dark)' }}>
+                        Нет начислений по специалистам
+                      </span>
+                      <span style={{ fontSize: '12px' }}>
+                        После добавления специалистов и проведения первых занятий здесь автоматически активируется детальный сплит 50/50.
+                      </span>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                summary.specialists.map(s => (
+                  <tr key={s.id}>
+                    <td>
+                      <strong style={{ color: 'var(--text-dark)' }}>{s.full_name}</strong>
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{s.specialty}</td>
+                    <td style={{ fontFamily: 'monospace', fontWeight: '700' }}>{s.completed_sessions_count}</td>
+                    <td style={{ fontWeight: '700', color: 'var(--text-dark)' }}>
+                      {s.total_gross_generated.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ color: 'var(--color-teal)', fontWeight: '700' }}>
+                      {(s.total_gross_generated - s.accrued_salary).toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ fontWeight: '700', color: 'var(--color-blue-dark)' }}>
+                      {s.accrued_salary.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td>
+                      <span style={{
+                        fontWeight: '800',
+                        color: s.balance_due > 0 ? 'var(--color-gold-dark)' : 'var(--text-secondary)'
+                      }}>
+                        {Math.max(0, s.balance_due).toLocaleString('ru-RU')} ₸
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -361,58 +376,73 @@ export const AccountingView = () => {
               </tr>
             </thead>
             <tbody>
-              {transactions.slice(0, 15).map(tx => (
-                <tr key={tx.id}>
-                  <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>#{tx.id}</td>
-                  <td style={{ fontFamily: 'monospace', fontSize: '13px' }}>
-                    {tx.created_at ? tx.created_at.substring(0, 16) : '—'}
-                  </td>
-                  <td>
-                    <span style={{
-                      padding: '3px 8px',
-                      borderRadius: 'var(--radius-xs)',
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      background: tx.type === 'session_revenue' ? 'var(--color-teal-light)' :
-                                  tx.type === 'client_payment' ? 'var(--color-green-light)' : 'var(--surface-subtle)',
-                      color: tx.type === 'session_revenue' ? 'var(--color-teal-dark)' :
-                             tx.type === 'client_payment' ? 'var(--color-green-dark)' : 'var(--text-dark)'
-                    }}>
-                      {tx.type === 'session_revenue' ? 'Начисление за занятие' :
-                       tx.type === 'client_payment' ? 'Оплата от клиента' :
-                       tx.type === 'specialist_payout' ? 'Выплата зарплаты' : tx.type}
-                    </span>
-                  </td>
-                  <td>
-                    <strong style={{ color: 'var(--text-dark)' }}>{tx.child_name || tx.notes || '—'}</strong>
-                  </td>
-                  <td style={{ fontWeight: '800', color: 'var(--text-dark)' }}>
-                    {tx.amount_gross.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>
-                    {tx.specialist_share.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ color: 'var(--color-teal)' }}>
-                    {tx.center_share.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ textTransform: 'uppercase', fontSize: '12px', fontWeight: '700', color: 'var(--color-teal-dark)' }}>
-                    {tx.payment_method}
-                  </td>
-                  <td>
-                    <span style={{
-                      padding: '3px 8px',
-                      borderRadius: 'var(--radius-xs)',
-                      fontSize: '11px',
-                      fontWeight: '800',
-                      textTransform: 'uppercase',
-                      background: tx.status === 'paid' ? 'var(--color-green-light)' : 'var(--color-raspberry-light)',
-                      color: tx.status === 'paid' ? 'var(--color-green-dark)' : 'var(--color-raspberry-dark)'
-                    }}>
-                      {tx.status === 'paid' ? 'Оплачено' : 'Ожидает'}
-                    </span>
+              {transactions.length === 0 ? (
+                <tr>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text-secondary)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-dark)' }}>
+                        Финансовый реестр пуст
+                      </span>
+                      <span style={{ fontSize: '12px' }}>
+                        Все операции (приём оплат от родителей, начисления за сессии, выплаты зарплат) будут фиксироваться в этом журнале.
+                      </span>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                transactions.slice(0, 15).map(tx => (
+                  <tr key={tx.id}>
+                    <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>#{tx.id}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: '13px' }}>
+                      {tx.created_at ? tx.created_at.substring(0, 16) : '—'}
+                    </td>
+                    <td>
+                      <span style={{
+                        padding: '3px 8px',
+                        borderRadius: 'var(--radius-xs)',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        background: tx.type === 'session_revenue' ? 'var(--color-teal-light)' :
+                                    tx.type === 'client_payment' ? 'var(--color-green-light)' : 'var(--surface-subtle)',
+                        color: tx.type === 'session_revenue' ? 'var(--color-teal-dark)' :
+                               tx.type === 'client_payment' ? 'var(--color-green-dark)' : 'var(--text-dark)'
+                      }}>
+                        {tx.type === 'session_revenue' ? 'Начисление за занятие' :
+                         tx.type === 'client_payment' ? 'Оплата от клиента' :
+                         tx.type === 'specialist_payout' ? 'Выплата зарплаты' : tx.type}
+                      </span>
+                    </td>
+                    <td>
+                      <strong style={{ color: 'var(--text-dark)' }}>{tx.child_name || tx.notes || '—'}</strong>
+                    </td>
+                    <td style={{ fontWeight: '800', color: 'var(--text-dark)' }}>
+                      {tx.amount_gross.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)' }}>
+                      {tx.specialist_share.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ color: 'var(--color-teal)' }}>
+                      {tx.center_share.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ textTransform: 'uppercase', fontSize: '12px', fontWeight: '700', color: 'var(--color-teal-dark)' }}>
+                      {tx.payment_method}
+                    </td>
+                    <td>
+                      <span style={{
+                        padding: '3px 8px',
+                        borderRadius: 'var(--radius-xs)',
+                        fontSize: '11px',
+                        fontWeight: '800',
+                        textTransform: 'uppercase',
+                        background: tx.status === 'paid' ? 'var(--color-green-light)' : 'var(--color-raspberry-light)',
+                        color: tx.status === 'paid' ? 'var(--color-green-dark)' : 'var(--color-raspberry-dark)'
+                      }}>
+                        {tx.status === 'paid' ? 'Оплачено' : 'Ожидает'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

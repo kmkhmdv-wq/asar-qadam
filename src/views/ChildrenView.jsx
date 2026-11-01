@@ -317,13 +317,28 @@ export const ChildrenView = () => {
         ) : filteredChildren.length === 0 ? (
           <div style={{
             background: 'var(--surface-white)',
-            border: '1px solid var(--border-light)',
-            padding: '40px',
+            border: '1px dashed var(--border-medium)',
+            padding: '48px 24px',
             textAlign: 'center',
-            color: 'var(--text-secondary)',
-            borderRadius: 'var(--radius-md)'
+            borderRadius: 'var(--radius-md)',
+            margin: '16px 0'
           }}>
-            Дети по заданным критериям не найдены.
+            <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-dark)', marginBottom: '8px' }}>
+              База детей пуста
+            </h3>
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '18px', maxWidth: '460px', margin: '0 auto 18px auto' }}>
+              В центре пока нет зарегистрированных воспитанников. Нажмите «Новая карточка ребёнка», чтобы внести первого ребёнка.
+            </p>
+            {canEditChildren && (
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(true)}
+                className="btn-primary-cta"
+                style={{ margin: '0 auto', padding: '10px 20px', fontSize: '14px' }}
+              >
+                Новая карточка ребёнка
+              </button>
+            )}
           </div>
         ) : (
           <div style={{

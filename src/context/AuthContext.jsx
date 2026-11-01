@@ -116,27 +116,6 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {}
   };
 
-  const switchRole = async (role) => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/auth/switch-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role })
-      });
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem('asar_token', data.token);
-        setToken(data.token);
-        setUser(data.user);
-      }
-    } catch (err) {
-      console.error('Failed to switch role', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const logout = () => {
     localStorage.removeItem('asar_token');
     setToken(null);
@@ -164,7 +143,6 @@ export const AuthProvider = ({ children }) => {
         resetPassword,
         updateProfile,
         reloadUser,
-        switchRole,
         logout,
         canAccessAccounting,
         canManageSchedule,

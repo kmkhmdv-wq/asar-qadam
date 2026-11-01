@@ -77,9 +77,10 @@ export const DashboardView = ({ onNavigate }) => {
                   fontSize: '11px',
                   fontWeight: '700',
                   padding: '2px 8px',
-                  borderRadius: 'var(--radius-full)'
+                  borderRadius: 'var(--radius-full)',
+                  textTransform: 'capitalize'
                 }}>
-                  Октябрь 2026
+                  {new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(new Date())}
                 </span>
               </div>
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Asia/Almaty</span>
@@ -260,30 +261,44 @@ export const DashboardView = ({ onNavigate }) => {
           gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
           gap: '16px'
         }}>
-          {childrenWithAlerts.slice(0, 3).map((child) => (
-            <div 
-              key={child.id}
-              style={{
-                background: 'var(--surface-white)',
-                border: '1px solid var(--border-light)',
-                borderLeft: '4px solid var(--color-raspberry)',
-                padding: '16px',
-                borderRadius: 'var(--radius-sm)',
-                boxShadow: 'var(--shadow-sm)'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-                <h4 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-dark)' }}>
-                  {child.full_name}
-                </h4>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{child.ageLabel}</span>
-              </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-main)', marginBottom: '8px' }}>
-                {child.diagnosis || 'Коррекционная программа'}
-              </div>
-              <MedicalAlertBadge child={child} />
+          {childrenWithAlerts.length === 0 ? (
+            <div style={{
+              gridColumn: '1 / -1',
+              background: 'var(--surface-white)',
+              border: '1px solid var(--border-light)',
+              padding: '24px',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-secondary)',
+              fontSize: '13px'
+            }}>
+              Нет детей с критическими медицинскими предупреждениями. При внесении данных о здоровье в карточку ребёнка они сразу отобразятся в этом блоке.
             </div>
-          ))}
+          ) : (
+            childrenWithAlerts.slice(0, 3).map((child) => (
+              <div 
+                key={child.id}
+                style={{
+                  background: 'var(--surface-white)',
+                  border: '1px solid var(--border-light)',
+                  borderLeft: '4px solid var(--color-raspberry)',
+                  padding: '16px',
+                  borderRadius: 'var(--radius-sm)',
+                  boxShadow: 'var(--shadow-sm)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                  <h4 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-dark)' }}>
+                    {child.full_name}
+                  </h4>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{child.ageLabel}</span>
+                </div>
+                <div style={{ fontSize: '13px', color: 'var(--text-main)', marginBottom: '8px' }}>
+                  {child.diagnosis || 'Коррекционная программа'}
+                </div>
+                <MedicalAlertBadge child={child} />
+              </div>
+            ))
+          )}
         </div>
       </div>
 

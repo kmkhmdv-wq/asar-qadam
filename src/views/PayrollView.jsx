@@ -234,48 +234,63 @@ export const PayrollView = () => {
               </tr>
             </thead>
             <tbody>
-              {payrollList.map(s => (
-                <tr key={s.specialistId}>
-                  <td>
-                    <strong style={{ color: 'var(--text-dark)', fontSize: '15px' }}>{s.fullName}</strong>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{s.specialty}</td>
-                  <td>
-                    <span style={{ fontFamily: 'monospace', fontWeight: '700' }}>
-                      {s.totalSessionsHeld} / {s.payableSessionsCount}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                      {s.baseRate?.toLocaleString('ru-RU')} ₸ · {s.defaultPercentage}%
-                    </span>
-                  </td>
-                  <td style={{ fontWeight: '800', color: 'var(--text-dark)' }}>
-                    {s.accruedSalary?.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ color: 'var(--color-green-dark)', fontWeight: '700' }}>
-                    {s.paidSalary?.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td>
-                    <span style={{
-                      fontWeight: '800',
-                      fontSize: '15px',
-                      color: s.balanceDue > 0 ? 'var(--color-gold-dark)' : 'var(--text-secondary)'
-                    }}>
-                      {s.balanceDue?.toLocaleString('ru-RU')} ₸
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      onClick={() => handleOpenPayout(s)}
-                      className="btn-secondary"
-                      style={{ padding: '6px 12px', fontSize: '12px' }}
-                    >
-                      Выплатить
-                    </button>
+              {payrollList.length === 0 ? (
+                <tr>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text-secondary)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-dark)' }}>
+                        Ведомость начислений пуста
+                      </span>
+                      <span style={{ fontSize: '12px' }}>
+                        Здесь будут отображаться специалисты с рассчитанными суммами к выплате по мере проведения занятий.
+                      </span>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                payrollList.map(s => (
+                  <tr key={s.specialistId}>
+                    <td>
+                      <strong style={{ color: 'var(--text-dark)', fontSize: '15px' }}>{s.fullName}</strong>
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{s.specialty}</td>
+                    <td>
+                      <span style={{ fontFamily: 'monospace', fontWeight: '700' }}>
+                        {s.totalSessionsHeld} / {s.payableSessionsCount}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        {s.baseRate?.toLocaleString('ru-RU')} ₸ · {s.defaultPercentage}%
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: '800', color: 'var(--text-dark)' }}>
+                      {s.accruedSalary?.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ color: 'var(--color-green-dark)', fontWeight: '700' }}>
+                      {s.paidSalary?.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td>
+                      <span style={{
+                        fontWeight: '800',
+                        fontSize: '15px',
+                        color: s.balanceDue > 0 ? 'var(--color-gold-dark)' : 'var(--text-secondary)'
+                      }}>
+                        {s.balanceDue?.toLocaleString('ru-RU')} ₸
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => handleOpenPayout(s)}
+                        className="btn-secondary"
+                        style={{ padding: '6px 12px', fontSize: '12px' }}
+                      >
+                        Выплатить
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -311,26 +326,41 @@ export const PayrollView = () => {
               </tr>
             </thead>
             <tbody>
-              {payoutHistory.map(p => (
-                <tr key={p.id}>
-                  <td style={{ fontFamily: 'monospace', fontWeight: '700' }}>{p.payment_date}</td>
-                  <td>
-                    <strong style={{ color: 'var(--text-dark)' }}>{p.specialist_name}</strong>
-                  </td>
-                  <td style={{ fontWeight: '800', color: 'var(--color-teal)' }}>
-                    {p.amount?.toLocaleString('ru-RU')} ₸
-                  </td>
-                  <td style={{ textTransform: 'uppercase', fontSize: '12px', fontWeight: '700' }}>
-                    {p.payment_method}
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                    {p.notes || 'Выплата зарплаты'}
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-                    {p.created_by_name || 'Руководитель'}
+              {payoutHistory.length === 0 ? (
+                <tr>
+                  <td colSpan="6" style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text-secondary)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-dark)' }}>
+                        История выплат пуста
+                      </span>
+                      <span style={{ fontSize: '12px' }}>
+                        Здесь будут регистрироваться все фактически произведённые выплаты заработной платы сотрудникам.
+                      </span>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                payoutHistory.map(p => (
+                  <tr key={p.id}>
+                    <td style={{ fontFamily: 'monospace', fontWeight: '700' }}>{p.payment_date}</td>
+                    <td>
+                      <strong style={{ color: 'var(--text-dark)' }}>{p.specialist_name}</strong>
+                    </td>
+                    <td style={{ fontWeight: '800', color: 'var(--color-teal)' }}>
+                      {p.amount?.toLocaleString('ru-RU')} ₸
+                    </td>
+                    <td style={{ textTransform: 'uppercase', fontSize: '12px', fontWeight: '700' }}>
+                      {p.payment_method}
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                      {p.notes || 'Выплата зарплаты'}
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
+                      {p.created_by_name || 'Руководитель'}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

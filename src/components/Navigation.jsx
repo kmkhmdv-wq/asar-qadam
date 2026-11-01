@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { SvgIcon } from './icons/CustomIcons';
 
 export const Navigation = ({ currentView, onViewChange, isOpen, onClose }) => {
-  const { user, switchRole, logout, canAccessAccounting, canManageUsers, canManagePayroll, canUseAi } = useAuth();
+  const { user, logout, canAccessAccounting, canManageUsers, canManagePayroll, canUseAi } = useAuth();
 
   const roleLabels = {
     owner: 'Владелец',
@@ -222,8 +222,8 @@ export const Navigation = ({ currentView, onViewChange, isOpen, onClose }) => {
                 <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-dark)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                   {user ? user.name : 'Пользователь'}
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--color-teal-dark)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {user ? (roleLabels[user.role] || user.role) : '—'}
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>
+                  {user?.branch || 'Центр Asar Qadam'}
                 </div>
               </div>
             </div>
@@ -251,39 +251,6 @@ export const Navigation = ({ currentView, onViewChange, isOpen, onClose }) => {
             >
               <SvgIcon name="logout" size={16} />
             </button>
-          </div>
-
-          {/* Switch Role Pills for Testing RBAC */}
-          <div>
-            <div className="text-label-muted" style={{ fontSize: '9px', marginBottom: '4px' }}>
-              Быстрое переключение ролей:
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px' }}>
-              {[
-                { id: 'owner', label: 'Владелец', bgActive: 'var(--color-teal)', textActive: '#FFF' },
-                { id: 'director', label: 'Руководитель', bgActive: 'var(--color-blue)', textActive: '#FFF' },
-                { id: 'admin', label: 'Администратор', bgActive: 'var(--color-gold)', textActive: '#45424B' },
-                { id: 'specialist', label: 'Специалист', bgActive: 'var(--color-raspberry)', textActive: '#FFF' }
-              ].map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => switchRole(r.id)}
-                  style={{
-                    background: user && user.role === r.id ? r.bgActive : 'var(--surface-white)',
-                    color: user && user.role === r.id ? r.textActive : 'var(--text-main)',
-                    border: '1px solid var(--border-medium)',
-                    padding: '4px 6px',
-                    borderRadius: 'var(--radius-xs)',
-                    fontSize: '10px',
-                    fontWeight: user && user.role === r.id ? '800' : '600',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </aside>

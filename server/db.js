@@ -313,7 +313,8 @@ const {
   pool,
   replicateToSupabase,
   syncFromSupabase,
-  getSupabaseHealth
+  getSupabaseHealth,
+  flushPendingWrites
 } = require('./services/supabaseSync');
 
 // Intercept prepare().run() to replicate write queries directly to Supabase Postgres
@@ -326,10 +327,10 @@ db.prepare = function(sql) {
     const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
     const res = originalRun(...flatParams);
 
-    // Asynchronously replicate write queries to Supabase
+    // Asynchronously replicate write queries to Supabase with row ID
     const isWrite = /^\s*(INSERT|UPDATE|DELETE|REPLACE)\s+/i.test(sql);
     if (isWrite) {
-      replicateToSupabase(sql, flatParams);
+      replicateToSupabase(sql, flatParams, res?.lastInsertRowid);
     }
 
     return res;
@@ -343,6 +344,7 @@ db.supabase = supabase;
 db.pool = pool;
 db.syncFromSupabase = () => syncFromSupabase(db);
 db.getSupabaseHealth = getSupabaseHealth;
+db.flushWrites = flushPendingWrites;
 
 // Trigger initial sync from Supabase in background
 syncFromSupabase(db).catch(err => {

@@ -177,11 +177,11 @@ export const ProfileView = () => {
                   fontSize: '11px',
                   fontWeight: '800',
                   textTransform: 'uppercase',
-                  background: roleBadgeColors.bg,
-                  color: roleBadgeColors.color,
-                  border: `1px solid ${roleBadgeColors.border}`
+                  background: 'var(--color-teal-light)',
+                  color: 'var(--color-teal-dark)',
+                  border: '1px solid var(--color-teal)'
                 }}>
-                  {roleRussianLabels[user?.role] || user?.role}
+                  Сотрудник центра
                 </span>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   ID #{user?.id} · {user?.branch || 'Астана — Центр'}
