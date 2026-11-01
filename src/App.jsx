@@ -29,7 +29,7 @@ export const App = () => {
         setCurrentView('dashboard');
       }
     } else if (user?.role === 'admin') {
-      const restricted = ['payroll', 'users', 'audit'];
+      const restricted = ['payroll', 'audit'];
       if (restricted.includes(currentView)) {
         setCurrentView('dashboard');
       }
@@ -45,7 +45,7 @@ export const App = () => {
     accounting: { title: 'Интеллектуальная бухгалтерия', subtitle: 'Автоматический расчёт доходов 50/50, дебиторская задолженность и кассовый журнал' },
     payroll: { title: 'Заработная плата специалистов', subtitle: 'Раздельный учёт начислений и выплат, ведомость задолженностей' },
     ai: { title: 'AI-Бухгалтер Asar Qadam', subtitle: 'Интеллектуальный помощник для анализа финансовых показателей и отчётов' },
-    users: { title: 'Заявки на регистрацию и права доступа', subtitle: 'Ролевая модель доступа (RBAC) и одобрение новых пользователей' },
+    users: { title: 'Команда и управление доступом (RBAC)', subtitle: 'Штатные сотрудники, разграничение прав доступа, повышение и перевод специалистов' },
     audit: { title: 'Журнал аудита системы', subtitle: 'Неизменяемый протокол всех действий сотрудников и операций' },
     profile: { title: 'Личный кабинет сотрудника', subtitle: 'Редактирование личных данных, контактов и параметров безопасности' }
   };

@@ -21,7 +21,7 @@ export const Navigation = ({ currentView, onViewChange, isOpen, onClose }) => {
     { id: 'accounting', label: 'Бухгалтерия', icon: 'finance', color: 'var(--color-teal-dark)', bg: 'var(--color-teal-light)', allowed: canAccessAccounting },
     { id: 'payroll', label: 'Заработная плата', icon: 'payroll', color: 'var(--color-gold-dark)', bg: 'var(--color-gold-light)', allowed: canManagePayroll },
     { id: 'ai', label: 'AI-Бухгалтер', icon: 'ai', color: 'var(--color-blue-dark)', bg: 'var(--color-blue-light)', allowed: canUseAi },
-    { id: 'users', label: 'Заявки и доступ', icon: 'users', color: 'var(--color-raspberry)', bg: 'var(--color-raspberry-light)', allowed: canManageUsers },
+    { id: 'users', label: 'Команда и роли', icon: 'users', color: 'var(--color-raspberry)', bg: 'var(--color-raspberry-light)', allowed: canManageUsers },
     { id: 'audit', label: 'Журнал аудита', icon: 'audit', color: 'var(--text-main)', bg: 'var(--surface-subtle)', allowed: canManageUsers },
     { id: 'profile', label: 'Мой профиль', icon: 'user', color: 'var(--color-teal-dark)', bg: 'var(--color-teal-light)', allowed: true }
   ];

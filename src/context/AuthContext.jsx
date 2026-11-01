@@ -28,6 +28,16 @@ export const AuthProvider = ({ children }) => {
           setUser(null);
           setLoading(false);
         });
+
+      // Dynamic real-time role & permission syncing
+      const handleFocus = () => reloadUser();
+      window.addEventListener('focus', handleFocus);
+      const pollInterval = setInterval(() => reloadUser(), 15000);
+
+      return () => {
+        window.removeEventListener('focus', handleFocus);
+        clearInterval(pollInterval);
+      };
     } else {
       setLoading(false);
     }
@@ -123,13 +133,18 @@ export const AuthProvider = ({ children }) => {
   };
 
   // RBAC Permission checks
+  const isOwner = user?.role === 'owner';
+  const isDirector = user?.role === 'director';
+  const isAdmin = user?.role === 'admin';
+  const isSpecialist = user?.role === 'specialist';
+
   const canAccessAccounting = user && ['owner', 'director', 'admin'].includes(user.role);
   const canManageSchedule = user && ['owner', 'director', 'admin'].includes(user.role);
   const canEditChildren = user && ['owner', 'director', 'admin'].includes(user.role);
   const canManageUsers = user && ['owner', 'director', 'admin'].includes(user.role);
+  const canChangeUserRoles = user && ['owner', 'director'].includes(user.role);
   const canManagePayroll = user && ['owner', 'director'].includes(user.role);
   const canUseAi = user && ['owner', 'director', 'admin'].includes(user.role);
-  const isSpecialist = user && user.role === 'specialist';
 
   return (
     <AuthContext.Provider
@@ -144,13 +159,17 @@ export const AuthProvider = ({ children }) => {
         updateProfile,
         reloadUser,
         logout,
+        isOwner,
+        isDirector,
+        isAdmin,
+        isSpecialist,
         canAccessAccounting,
         canManageSchedule,
         canEditChildren,
         canManageUsers,
+        canChangeUserRoles,
         canManagePayroll,
-        canUseAi,
-        isSpecialist
+        canUseAi
       }}
     >
       {children}

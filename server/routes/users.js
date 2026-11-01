@@ -105,7 +105,9 @@ const handleApprove = async (req, res) => {
     if (effectiveSpecId) {
       db.prepare('UPDATE specialists SET is_active = 1, user_id = ? WHERE id = ?').run(userId, effectiveSpecId);
       if (db.supabase) {
-        db.supabase.from('specialists').update({ is_active: 1, user_id: userId }).eq('id', effectiveSpecId).catch(() => {});
+        try {
+          await db.supabase.from('specialists').update({ is_active: 1, user_id: userId }).eq('id', effectiveSpecId);
+        } catch (e) {}
       }
     }
   }
@@ -242,9 +244,241 @@ router.post('/status', async (req, res) => {
     ipAddress: req.ip
   });
 
-  res.json({ success: true, message: 'Статус пользователя обновлен' });
+  res.json({ success: true, message: `Статус пользователя ${target.name} изменён на «${status}»` });
 });
 
+// 5.5 Dynamic Role Change (Promotion / Demotion RBAC)
+router.put('/:id/role', async (req, res) => {
+  const targetId = req.params.id;
+  const { role: newRole } = req.body;
+
+  const validRoles = ['specialist', 'director', 'admin', 'owner'];
+  if (!validRoles.includes(newRole)) {
+    return res.status(400).json({ error: 'Некорректная роль. Допустимы: специалист, руководитель, администратор' });
+  }
+
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (!target) {
+    return res.status(404).json({ error: 'Сотрудник не найден' });
+  }
+
+  // RBAC Permission checks:
+  // 1. Only owner can touch owner role or grant director role
+  if ((newRole === 'owner' || target.role === 'owner') && req.user.role !== 'owner') {
+    return res.status(403).json({ error: 'Только Владелец может управлять ролью Владельца' });
+  }
+  if (newRole === 'director' && req.user.role !== 'owner') {
+    return res.status(403).json({ error: 'Только Владелец может назначать роль Руководителя' });
+  }
+  // 2. Admins cannot change roles
+  if (req.user.role === 'admin') {
+    return res.status(403).json({ error: 'У вас нет прав на изменение ролей сотрудников' });
+  }
+
+  let effectiveSpecId = target.specialist_id;
+
+  // If switched to specialist, ensure specialist profile card exists
+  if (newRole === 'specialist') {
+    if (!effectiveSpecId) {
+      let existingSp = db.prepare('SELECT id FROM specialists WHERE user_id = ? OR (email IS NOT NULL AND email = ?)').get(targetId, target.email || '__none__');
+      if (existingSp) {
+        effectiveSpecId = existingSp.id;
+      } else {
+        const fullName = target.name || `${target.first_name || ''} ${target.last_name || ''}`.trim() || 'Специалист';
+        const spRes = db.prepare(`
+          INSERT INTO specialists (
+            user_id, full_name, first_name, last_name, middle_name, phone, email,
+            specialty, position, branch, directions, default_percentage, base_rate,
+            work_days, work_hours_start, work_hours_end, is_active, color_badge
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Специалист центра', 'Специалист', ?, '["Логопед","АВА-терапевт","АФК-тренер"]', 50.0, 8000.0, '["mon","tue","wed","thu","fri","sat"]', '09:00', '18:00', 1, '#F47920')
+        `).run(targetId, fullName, target.first_name, target.last_name, target.middle_name, target.phone || '', target.email || null, target.branch || 'Астана — Центр');
+        effectiveSpecId = spRes.lastInsertRowid;
+      }
+    }
+    if (effectiveSpecId) {
+      db.prepare('UPDATE specialists SET is_active = 1, user_id = ? WHERE id = ?').run(targetId, effectiveSpecId);
+      if (db.supabase) {
+        try {
+          await db.supabase.from('specialists').update({ is_active: 1, user_id: targetId }).eq('id', effectiveSpecId);
+        } catch (e) {}
+      }
+    }
+  }
+
+  // 1. Update in Supabase
+  try {
+    await db.supabase
+      .from('users')
+      .update({
+        role: newRole,
+        specialist_id: effectiveSpecId || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', targetId);
+    console.log(`[Supabase] Role updated for user #${targetId} -> ${newRole}`);
+  } catch (err) {
+    console.warn('[Supabase Role Update Warning]:', err.message);
+  }
+
+  // 2. Update local DB
+  db.prepare(`
+    UPDATE users 
+    SET role = ?, specialist_id = ?, updated_at = CURRENT_TIMESTAMP 
+    WHERE id = ?
+  `).run(newRole, effectiveSpecId || null, targetId);
+
+  const updatedUser = db.prepare('SELECT id, name, first_name, last_name, email, phone, role, status, branch, specialist_id FROM users WHERE id = ?').get(targetId);
+
+  // 3. Audit log
+  const roleNames = {
+    owner: 'Владелец',
+    director: 'Руководитель',
+    admin: 'Администратор',
+    specialist: 'Специалист'
+  };
+
+  logAuditAction({
+    userId: req.user.id,
+    userName: req.user.name,
+    userRole: req.user.role,
+    action: 'USER_ROLE_CHANGED',
+    entityType: 'users',
+    entityId: targetId,
+    details: `Роль сотрудника ${target.name} изменена с «${roleNames[target.role] || target.role}» на «${roleNames[newRole] || newRole}»`,
+    ipAddress: req.ip
+  });
+
+  res.json({
+    success: true,
+    message: `Роль сотрудника ${target.name} успешно изменена на «${roleNames[newRole] || newRole}»`,
+    user: updatedUser
+  });
+});
+
+// 5.6 Edit employee details
+router.put('/:id', async (req, res) => {
+  const targetId = req.params.id;
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (!target) {
+    return res.status(404).json({ error: 'Сотрудник не найден' });
+  }
+
+  const {
+    first_name,
+    last_name,
+    middle_name,
+    email,
+    phone,
+    role,
+    branch,
+    specialty
+  } = req.body;
+
+  if (role && (role === 'owner' || target.role === 'owner') && req.user.role !== 'owner') {
+    return res.status(403).json({ error: 'Только Владелец может изменять роль Владельца' });
+  }
+  if (role === 'director' && req.user.role !== 'owner') {
+    return res.status(403).json({ error: 'Только Владелец может назначать роль Руководителя' });
+  }
+
+  const fName = first_name !== undefined ? (first_name || '').trim() : target.first_name;
+  const lName = last_name !== undefined ? (last_name || '').trim() : target.last_name;
+  const mName = middle_name !== undefined ? (middle_name || '').trim() : target.middle_name;
+  const fullName = `${fName} ${lName}`.trim() || target.name;
+  const cleanEmail = email !== undefined ? (email || '').trim().toLowerCase() : target.email;
+  const cleanPhone = phone !== undefined ? (phone || '').trim() : target.phone;
+  const finalRole = role || target.role;
+  const finalBranch = branch || target.branch || 'Астана — Центр';
+
+  // 1. Supabase update
+  try {
+    await db.supabase
+      .from('users')
+      .update({
+        name: fullName,
+        first_name: fName,
+        last_name: lName,
+        middle_name: mName || null,
+        email: cleanEmail || null,
+        phone: cleanPhone || null,
+        role: finalRole,
+        branch: finalBranch,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', targetId);
+  } catch (err) {
+    console.warn('[Supabase User Edit Warning]:', err.message);
+  }
+
+  // 2. Local DB update
+  db.prepare(`
+    UPDATE users SET
+      name = ?,
+      first_name = ?,
+      last_name = ?,
+      middle_name = ?,
+      email = ?,
+      phone = ?,
+      role = ?,
+      branch = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    fullName,
+    fName,
+    lName,
+    mName || null,
+    cleanEmail || null,
+    cleanPhone || null,
+    finalRole,
+    finalBranch,
+    targetId
+  );
+
+  // If linked specialist exists, sync
+  if (target.specialist_id) {
+    db.prepare(`
+      UPDATE specialists 
+      SET full_name = ?, first_name = ?, last_name = ?, middle_name = ?, 
+          email = ?, phone = ?, branch = ?, specialty = COALESCE(?, specialty)
+      WHERE id = ?
+    `).run(
+      fullName, fName, lName, mName || null, cleanEmail || null, cleanPhone || null, finalBranch, specialty || null, target.specialist_id
+    );
+    if (db.supabase) {
+      try {
+        await db.supabase.from('specialists').update({
+          full_name: fullName,
+          first_name: fName,
+          last_name: lName,
+          email: cleanEmail || null,
+          phone: cleanPhone || null,
+          branch: finalBranch,
+          updated_at: new Date().toISOString()
+        }).eq('id', target.specialist_id);
+      } catch (e) {}
+    }
+  }
+
+  logAuditAction({
+    userId: req.user.id,
+    userName: req.user.name,
+    userRole: req.user.role,
+    action: 'USER_PROFILE_UPDATED',
+    entityType: 'users',
+    entityId: targetId,
+    details: `Обновлены данные сотрудника ${fullName} (${cleanEmail}, ${cleanPhone}, роль: ${finalRole})`,
+    ipAddress: req.ip
+  });
+
+  const updated = db.prepare('SELECT id, name, first_name, last_name, email, phone, role, status, branch, specialist_id FROM users WHERE id = ?').get(targetId);
+
+  res.json({
+    success: true,
+    message: `Данные сотрудника ${fullName} успешно обновлены`,
+    user: updated
+  });
+});
 
 // 6. Edit employee work profile by owner / director
 router.put('/:id/work-profile', (req, res) => {
@@ -420,7 +654,7 @@ router.post('/create', async (req, res) => {
         id, name, first_name, last_name, middle_name, email, phone, 
         password_hash, role, status, specialist_id, branch, phone_confirmed, email_confirmed
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, 1)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, 1)
     `).run(
       newUserId,
       fullName,
@@ -470,29 +704,30 @@ router.post('/create', async (req, res) => {
 
     db.prepare('UPDATE users SET specialist_id = ? WHERE id = ?').run(effectiveSpecId, newUserId);
     if (db.supabase) {
-      db.supabase.from('specialists').upsert({
-        id: effectiveSpecId,
-        user_id: newUserId,
-        full_name: fullName,
-        first_name: fName,
-        last_name: lName,
-        middle_name: mName,
-        phone: phone || '',
-        email: email || null,
-        specialty: 'Специалист центра',
-        position: 'Специалист',
-        branch: branch || 'Астана — Центр',
-        directions: spDirections,
-        default_percentage: 50.0,
-        base_rate: 8000.0,
-        work_days: '["mon","tue","wed","thu","fri","sat"]',
-        work_hours_start: '09:00',
-        work_hours_end: '18:00',
-        is_active: 1,
-        color_badge: '#F47920'
-      }).then(() => {
-        db.supabase.from('users').update({ specialist_id: effectiveSpecId }).eq('id', newUserId);
-      }).catch(() => {});
+      try {
+        await db.supabase.from('specialists').upsert({
+          id: effectiveSpecId,
+          user_id: newUserId,
+          full_name: fullName,
+          first_name: fName,
+          last_name: lName,
+          middle_name: mName,
+          phone: phone || '',
+          email: email || null,
+          specialty: 'Специалист центра',
+          position: 'Специалист',
+          branch: branch || 'Астана — Центр',
+          directions: spDirections,
+          default_percentage: 50.0,
+          base_rate: 8000.0,
+          work_days: '["mon","tue","wed","thu","fri","sat"]',
+          work_hours_start: '09:00',
+          work_hours_end: '18:00',
+          is_active: 1,
+          color_badge: '#F47920'
+        });
+        await db.supabase.from('users').update({ specialist_id: effectiveSpecId }).eq('id', newUserId);
+      } catch (e) {}
     }
   } else if (effectiveSpecId) {
     try {

@@ -441,7 +441,7 @@ router.post('/resend-confirmation', async (req, res) => {
 
 // 5. Login with real email verification and status check
 router.post('/login', async (req, res) => {
-  const login = req.body.login || req.body.identifier;
+  const login = req.body.login || req.body.identifier || req.body.email || req.body.phone;
   const password = req.body.password;
   if (!login || !password) {
     return res.status(400).json({ error: 'Введите логин (email или телефон) и пароль' });
