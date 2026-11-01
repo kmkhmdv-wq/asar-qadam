@@ -10,9 +10,8 @@ build/
 .output/
 
 # Environment files and credentials
-.env
-.env.local
-.env.*.local
+.env*
+!.env.example
 .vercel
 AGENTS.md
 GEMINI.md

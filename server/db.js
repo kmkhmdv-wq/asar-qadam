@@ -223,6 +223,26 @@ function runMigrations() {
   if (!userCols.includes('phone_confirmed')) db.exec('ALTER TABLE users ADD COLUMN phone_confirmed INTEGER DEFAULT 1');
   if (!userCols.includes('email_confirmed')) db.exec('ALTER TABLE users ADD COLUMN email_confirmed INTEGER DEFAULT 1');
   if (!userCols.includes('bio')) db.exec('ALTER TABLE users ADD COLUMN bio TEXT');
+  if (!userCols.includes('phone_verified')) db.exec('ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0');
+  if (!userCols.includes('phone_verified_at')) db.exec('ALTER TABLE users ADD COLUMN phone_verified_at DATETIME');
+  if (!userCols.includes('tg_chat_id')) db.exec('ALTER TABLE users ADD COLUMN tg_chat_id INTEGER');
+
+  // Create tg_verifications table locally if not exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tg_verifications (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER,
+      phone TEXT NOT NULL,
+      chat_id INTEGER,
+      code_hash TEXT,
+      code_expires_at DATETIME,
+      token_expires_at DATETIME NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      used INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 
   // Populate first_name / last_name for existing users if empty
   const usersToUpdate = db.prepare("SELECT id, name FROM users WHERE first_name IS NULL OR first_name = ''").all();

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { SvgIcon } from '../components/icons/CustomIcons';
+import TelegramPhoneVerification from '../components/TelegramPhoneVerification';
 
 export const ProfileView = () => {
-  const { user, updateProfile, sendVerificationCode } = useAuth();
+  const { user, updateProfile, sendVerificationCode, reloadUser } = useAuth();
 
   const [formData, setFormData] = useState({
     first_name: user?.first_name || '',
@@ -218,6 +219,12 @@ export const ProfileView = () => {
                 {user?.branch || 'Астана — Центр'}
               </div>
             </div>
+            <div style={{ borderLeft: '1px solid var(--border-subtle)', paddingLeft: '20px' }}>
+              <span className="text-label-muted" style={{ fontSize: '10px' }}>Телефон (Telegram):</span>
+              <div style={{ fontSize: '14px', fontWeight: '800', color: user?.phone_verified ? 'var(--color-green)' : 'var(--color-gold)' }}>
+                {user?.phone_verified ? '● Подтверждён' : '○ Требует подтверждения'}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -406,6 +413,15 @@ export const ProfileView = () => {
                 className="form-input"
                 value={formData.phone}
                 onChange={e => setFormData({ ...formData, phone: e.target.value })}
+              />
+              <TelegramPhoneVerification
+                userId={user?.id}
+                phone={formData.phone}
+                isVerified={Boolean(user?.phone_verified)}
+                onSuccess={() => {
+                  reloadUser();
+                  setSuccessMsg('Номер телефона успешно подтверждён через Telegram!');
+                }}
               />
             </div>
             <div>

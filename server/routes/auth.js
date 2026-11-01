@@ -115,6 +115,43 @@ router.post('/verify-code', (req, res) => {
   const entry = otpStore.get(cleanTarget);
 
   if (!entry) {
+    // Check tg_verifications in database (Telegram bot verification)
+    const digits = cleanTarget.replace(/\D/g, '');
+    const normPhone = digits.length === 11 ? ('+7' + digits.slice(1)) : (digits.length === 10 ? ('+7' + digits) : cleanTarget);
+    const tgRecord = db.prepare(`
+      SELECT * FROM tg_verifications 
+      WHERE phone = ? AND used = 0
+      ORDER BY created_at DESC LIMIT 1
+    `).get(normPhone);
+
+    if (tgRecord && tgRecord.code_hash) {
+      if (new Date(tgRecord.code_expires_at) < new Date()) {
+        return res.status(400).json({ error: 'Срок действия кода из Telegram (5 минут) истёк. Запросите новый код.' });
+      }
+      const crypto = require('crypto');
+      const inputHash = crypto.createHash('sha256').update(cleanCode).digest('hex');
+      if (inputHash === tgRecord.code_hash) {
+        db.prepare('UPDATE tg_verifications SET used = 1 WHERE token = ?').run(tgRecord.token);
+        if (db.supabase) {
+          db.supabase.from('tg_verifications').update({ used: true }).eq('token', tgRecord.token).catch(() => {});
+        }
+        if (tgRecord.user_id) {
+          db.prepare('UPDATE users SET phone_verified = 1, phone_confirmed = 1, phone_verified_at = CURRENT_TIMESTAMP, tg_chat_id = COALESCE(?, tg_chat_id) WHERE id = ?')
+            .run(tgRecord.chat_id, tgRecord.user_id);
+          if (db.supabase) {
+            db.supabase.from('users').update({ phone_verified: true, phone_confirmed: 1, phone_verified_at: new Date().toISOString(), tg_chat_id: tgRecord.chat_id }).eq('id', tgRecord.user_id).catch(() => {});
+          }
+        }
+        return res.json({
+          success: true,
+          verified: true,
+          message: 'Номер телефона успешно подтверждён через Telegram!'
+        });
+      } else {
+        return res.status(400).json({ error: 'Неверный код подтверждения из Telegram' });
+      }
+    }
+
     return res.status(400).json({ error: 'Код подтверждения не запрашивался или срок его действия истёк. Запросите код заново.' });
   }
 
@@ -549,6 +586,9 @@ router.post('/login', async (req, res) => {
       middle_name: user.middle_name,
       email: user.email,
       phone: user.phone,
+      phone_verified: Boolean(user.phone_verified || user.phone_confirmed),
+      phone_verified_at: user.phone_verified_at,
+      tg_chat_id: user.tg_chat_id,
       role: user.role,
       specialist_id: user.specialist_id,
       branch: user.branch || 'Астана — Центр',
@@ -627,6 +667,9 @@ router.get('/me', authMiddleware, (req, res) => {
       middle_name: user.middle_name,
       email: user.email,
       phone: user.phone,
+      phone_verified: Boolean(user.phone_verified || user.phone_confirmed),
+      phone_verified_at: user.phone_verified_at,
+      tg_chat_id: user.tg_chat_id,
       role: user.role,
       specialist_id: user.specialist_id,
       branch: user.branch || 'Астана — Центр',
