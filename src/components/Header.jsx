@@ -12,7 +12,7 @@ export const Header = ({ title, subtitle, onQuickAction, quickActionLabel, onOpe
   }).format(new Date());
 
   return (
-    <header style={{
+    <header className="app-main-header" style={{
       padding: '14px 24px',
       borderBottom: '1px solid var(--border-light)',
       background: 'var(--surface-white)',

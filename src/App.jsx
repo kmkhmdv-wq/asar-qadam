@@ -15,6 +15,7 @@ import { AiAccountantView } from './views/AiAccountantView';
 import { UsersAndRequestsView } from './views/UsersAndRequestsView';
 import { AuditLogView } from './views/AuditLogView';
 import { GeminiAssistantWidget } from './components/GeminiAssistantWidget';
+import { BottomNav } from './components/BottomNav';
 
 export const App = () => {
   const { user, loading } = useAuth();
@@ -98,7 +99,7 @@ export const App = () => {
           onNavigateToProfile={() => setCurrentView('profile')}
         />
 
-        <main style={{ flex: 1 }}>
+        <main className="main-app-content" style={{ flex: 1 }}>
           {currentView === 'dashboard' && <DashboardView onNavigate={setCurrentView} />}
           {currentView === 'schedule' && <ScheduleView />}
           {currentView === 'children' && <ChildrenView />}
@@ -112,6 +113,16 @@ export const App = () => {
           {currentView === 'profile' && <ProfileView />}
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <BottomNav 
+        currentView={currentView}
+        onViewChange={(view) => {
+          setCurrentView(view);
+          setIsMobileNavOpen(false);
+        }}
+        onOpenMenu={() => setIsMobileNavOpen(true)}
+      />
 
       {/* Floating Google Gemini AI Assistant */}
       <GeminiAssistantWidget currentView={currentView} />

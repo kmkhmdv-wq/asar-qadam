@@ -322,10 +322,23 @@ body {
 /* ========================================================
    RESPONSIVE & MOBILE ADAPTATION (iPhone, Android, Tablets)
    ======================================================== */
-.table-responsive {
+.table-responsive,
+div:has(> table.data-table) {
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-md);
+}
+
+.table-responsive::-webkit-scrollbar,
+div:has(> table.data-table)::-webkit-scrollbar {
+  height: 5px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb,
+div:has(> table.data-table)::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 4px;
 }
 
 /* Hide on Desktop / Hide on Mobile utilities */
@@ -354,38 +367,112 @@ body {
   }
 
   /* Responsive layout padding */
-  .view-container, div[style*="padding: '24px 32px'"], div[style*="padding: '28px 32px'"] {
-    padding: 16px 12px !important;
+  .view-container, 
+  div[style*="padding: '24px 32px'"], 
+  div[style*="padding: '28px 32px'"] {
+    padding: 14px 12px !important;
   }
 
-  /* Navigation Drawer for Mobile */
-  .mobile-nav-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(36, 34, 40, 0.45);
-    backdrop-filter: blur(4px);
-    z-index: 998;
-    animation: fadeIn 0.2s ease;
+  /* Main content mobile padding so bottom nav doesn't cover content */
+  .main-app-content {
+    padding-bottom: 80px !important;
   }
 
-  .mobile-nav-drawer {
+  /* Show mobile bottom navigation bar */
+  .mobile-bottom-nav {
+    display: flex !important;
+  }
+
+  /* Off-Canvas Navigation Drawer for Mobile */
+  .sidebar-nav {
     position: fixed !important;
     top: 0 !important;
     left: 0 !important;
     bottom: 0 !important;
-    width: 290px !important;
-    max-width: 85vw !important;
-    z-index: 999 !important;
-    transform: translateX(0) !important;
-    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
-    box-shadow: 4px 0 24px rgba(69, 66, 75, 0.15) !important;
+    height: 100vh !important;
+    width: 285px !important;
+    max-width: 86vw !important;
+    z-index: 1000 !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    box-shadow: none !important;
   }
 
-  .mobile-nav-drawer.closed {
-    transform: translateX(-100%) !important;
+  .sidebar-nav.mobile-nav-open {
+    transform: translateX(0) !important;
+    box-shadow: 6px 0 32px rgba(10, 10, 14, 0.45) !important;
+  }
+
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 10, 14, 0.6);
+    backdrop-filter: blur(5px);
+    z-index: 999;
+    animation: fadeIn 0.2s ease;
+  }
+
+  /* Mobile Modals (Bottom-Sheet Experience) */
+  .modal-overlay {
+    padding: 0 !important;
+    align-items: flex-end !important;
+  }
+
+  .modal-card {
+    max-width: 100% !important;
+    max-height: 94vh !important;
+    border-radius: 20px 20px 0 0 !important;
+    border-bottom: none !important;
+    animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  /* Floating Gemini Assistant on Mobile */
+  .gemini-launcher-wrap {
+    bottom: 74px !important;
+    right: 14px !important;
+  }
+
+  .gemini-launcher-btn {
+    padding: 10px 14px !important;
+    font-size: 13px !important;
+    box-shadow: 0 4px 18px rgba(244, 121, 32, 0.5) !important;
+  }
+
+  .gemini-chat-panel {
+    inset: 0 !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    z-index: 10001 !important;
+  }
+
+  /* Data Table touch scrolling on mobile */
+  .data-table {
+    min-width: 620px !important;
+  }
+
+  .data-table th, .data-table td {
+    padding: 10px 12px !important;
+    font-size: 13px !important;
+  }
+
+  /* Form grids on mobile */
+  div[style*="gridTemplateColumns: '1fr 1fr'"],
+  div[style*="gridTemplateColumns: '1fr 1fr 1fr'"],
+  div[style*="gridTemplateColumns: 'repeat(3, 1fr)'"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Asymmetric dominant card tweaks for mobile */
+  .asym-dominant-card {
+    padding: 18px 16px !important;
+  }
+
+  .asym-secondary-card {
+    padding: 16px 14px !important;
   }
 
   /* Mobile Schedule view tweaks */
@@ -398,13 +485,45 @@ body {
     box-shadow: var(--shadow-sm);
   }
 
+  /* Header mobile padding */
+  .app-main-header {
+    padding: 10px 14px !important;
+  }
+
+  /* Auth card mobile padding */
+  .auth-card {
+    padding: 22px 18px !important;
+    border-radius: 12px !important;
+  }
+
+  /* Card grids on phone screens */
+  div[style*="repeat(auto-fill, minmax"] {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
   /* Touch-friendly buttons */
   .btn-primary-cta, .btn-raspberry-cta, .btn-secondary {
-    min-height: 42px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Input fields touch sizing */
+  .form-input, .form-select, .form-textarea {
+    font-size: 16px !important; /* Prevents auto-zoom on iOS Safari */
+    min-height: 44px;
+    padding: 10px 12px;
   }
 }
 
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }

@@ -293,7 +293,7 @@ export const AuthView = () => {
       </div>
 
       {/* Main Auth Card */}
-      <div style={{
+      <div className="auth-card" style={{
         width: '100%',
         maxWidth: '480px',
         background: 'var(--surface-primary)',

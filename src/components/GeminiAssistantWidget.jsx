@@ -104,9 +104,10 @@ export const GeminiAssistantWidget = ({ currentView }) => {
   return (
     <>
       {/* Floating Launcher Button */}
-      <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 995 }}>
+      <div className="gemini-launcher-wrap" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 995 }}>
         <button
           type="button"
+          className="gemini-launcher-btn"
           onClick={() => setIsOpen(!isOpen)}
           style={{
             background: '#F47920',
@@ -129,13 +130,13 @@ export const GeminiAssistantWidget = ({ currentView }) => {
           aria-label="ИИ-Ассистент Google Gemini"
         >
           <SvgIcon name="sparkles" size={19} color="#FFFFFF" />
-          <span>{isOpen ? 'Закрыть ассистента' : 'ИИ-Ассистент Gemini'}</span>
+          <span className="gemini-launcher-label">{isOpen ? 'Закрыть ассистента' : 'ИИ-Ассистент Gemini'}</span>
         </button>
       </div>
 
       {/* Chat Window Panel */}
       {isOpen && (
-        <div style={{
+        <div className="gemini-chat-panel" style={{
           position: 'fixed',
           bottom: '84px',
           right: '24px',

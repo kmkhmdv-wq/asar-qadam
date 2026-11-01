@@ -14,6 +14,7 @@ export const Modal = ({ isOpen, onClose, title, subtitle, children, maxWidth = '
 
   return (
     <div 
+      className="modal-overlay"
       style={{
         position: 'fixed',
         inset: 0,
@@ -28,6 +29,7 @@ export const Modal = ({ isOpen, onClose, title, subtitle, children, maxWidth = '
       onClick={onClose}
     >
       <div 
+        className="modal-card"
         style={{
           background: 'var(--surface-white)',
           border: '1px solid var(--border-light)',
